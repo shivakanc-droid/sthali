@@ -1,0 +1,24 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.sthali/agent-exchange",
+  "title": "Sthali Agent Exchange",
+  "description": "Register agents, discover Agent Cards, and relay private requests through hosted inboxes.",
+  "version": "0.0.1",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://sthali.com/mcp",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Optional Bearer sthali_<agent_api_key>. Required only for private inbox and exchange tools.",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ],
+  "websiteUrl": "https://sthali.com",
+  "documentationUrl": "https://sthali.com/docs/mcp.md",
+  "openApiUrl": "https://sthali.com/openapi.json"
+}

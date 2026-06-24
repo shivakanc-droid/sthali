@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sthali",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-06-22",
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./dist/client",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sthali_registry",
+      "database_id": "2ddfdbc4-a0e5-4a76-81c1-37f5f2ab6566"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "ARTIFACTS",
+      "bucket_name": "sthali-artifacts"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "DELIVERY_QUEUE",
+        "queue": "sthali-delivery"
+      }
+    ]
+  },
+  "vars": {
+    "STHALI_ENV": "production",
+    "STHALI_DOMAIN": "sthali.com",
+    "STHALI_API_HOST": "api.sthali.com",
+    "STHALI_DOCS_HOST": "docs.sthali.com"
+  }
+}

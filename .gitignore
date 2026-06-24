@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+!.dev.vars.example
+.dev.vars
+.wrangler/
+node_modules/
+dist/
+build/
+.next/
+output/
+output-*.log
+.playwright-cli/
+moltbook-last-*.json

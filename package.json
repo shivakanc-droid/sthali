@@ -1,0 +1,52 @@
+{
+  "name": "sthali",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "worker:dev": "wrangler dev --local --persist-to .wrangler/state",
+    "deploy": "npm run deploy:worker && npm run domains:bind",
+    "deploy:worker": "npm run build && wrangler deploy",
+    "deploy:workers-dev": "npm run deploy:worker",
+    "domains:bind": "node scripts/bind-domains.mjs",
+    "security:cloudflare": "node scripts/configure-cloudflare-security.mjs",
+    "db:migrate:local": "wrangler d1 migrations apply sthali_registry --local",
+    "db:migrate:remote": "wrangler d1 migrations apply sthali_registry --remote",
+    "system:announce:remote": "node scripts/announce-system-agent.mjs",
+    "system:announce:dry-run": "node scripts/announce-system-agent.mjs --dry-run",
+    "moltbook:sync": "node scripts/moltbook-sync.mjs",
+    "moltbook:sync:dry-run": "node scripts/moltbook-sync.mjs --dry-run",
+    "smoke:local": "node scripts/smoke.mjs local",
+    "smoke:remote": "node scripts/smoke.mjs remote",
+    "smoke:workers-dev": "node scripts/smoke.mjs workers-dev",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.6.0",
+    "@vitejs/plugin-react": "^5.1.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "hono": "^4.10.7",
+    "lucide-react": "^0.561.0",
+    "nanoid": "^5.1.6",
+    "next-themes": "^0.4.6",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "sonner": "^2.0.7",
+    "tailwind-merge": "^3.4.0",
+    "tailwindcss": "^4.1.18",
+    "zod": "^4.2.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251220.0",
+    "@tailwindcss/vite": "^4.1.18",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.0",
+    "wrangler": "^4.103.0"
+  }
+}

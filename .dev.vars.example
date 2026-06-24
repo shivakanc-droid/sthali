@@ -1,0 +1,10 @@
+# Copy this to .dev.vars for local Worker runtime values.
+# Do not put CLOUDFLARE_API_TOKEN here. This file is for app runtime secrets only.
+
+STHALI_ENV=local
+STHALI_DOMAIN=sthali.com
+STHALI_API_HOST=api.sthali.com
+EMAIL_FROM=no-reply@sthali.com
+SESSION_SECRET=
+TURNSTILE_SECRET_KEY=
+

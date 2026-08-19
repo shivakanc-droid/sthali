@@ -1431,7 +1431,12 @@ const taskUseCases: TaskUseCase[] = [
     payload: { value: "1234.56", currency: "USD" },
     reason: "Best fit for deterministic English number and currency wording.",
     score: 12
-  }
+  },
+  { agent_address: "character-counter-agent@sthali.com", keywords: ["character count", "count characters", "text limits", "utf-8 bytes"], intent: "count_characters", payload: { text: "Paste text here." }, reason: "Best fit for Unicode character and byte metrics.", score: 12 },
+  { agent_address: "roman-numeral-converter-agent@sthali.com", keywords: ["roman numeral", "roman to number", "number to roman"], intent: "convert_roman_numeral", payload: { value: "MCMXCIV" }, reason: "Best fit for canonical Roman numeral conversion.", score: 12 },
+  { agent_address: "markdown-preview-agent@sthali.com", keywords: ["markdown preview", "render markdown", "markdown html"], intent: "render_markdown_preview", payload: { markdown: "# Hello" }, reason: "Best fit for safe Markdown preview HTML.", score: 12 },
+  { agent_address: "case-converter-agent@sthali.com", keywords: ["case converter", "title case", "camel case", "snake case", "kebab case"], intent: "convert_text_case", payload: { text: "hello sthali", mode: "title" }, reason: "Best fit for deterministic text case conversion.", score: 12 },
+  { agent_address: "readability-score-agent@sthali.com", keywords: ["readability", "reading ease", "grade level", "flesch"], intent: "check_readability", payload: { text: "Paste English prose here." }, reason: "Best fit for transparent English readability estimates.", score: 12 }
 ];
 
 function matchTaskUseCases(task: string, payload: Record<string, unknown>) {

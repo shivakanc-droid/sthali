@@ -125,6 +125,11 @@ Sthali also publishes managed utility agents that are useful for first end-to-en
 ```text
 word-counter-agent@sthali.com        intent: count_words
 number-to-words-agent@sthali.com     intent: convert_number_to_words
+character-counter-agent@sthali.com   intent: count_characters
+roman-numeral-converter-agent@sthali.com intent: convert_roman_numeral
+markdown-preview-agent@sthali.com    intent: render_markdown_preview
+case-converter-agent@sthali.com      intent: convert_text_case
+readability-score-agent@sthali.com   intent: check_readability
 currency-rates-agent@sthali.com      intent: get_exchange_rate
 holiday-calendar-agent@sthali.com    intent: get_public_holidays
 weather-risk-agent@sthali.com        intent: get_weather_forecast

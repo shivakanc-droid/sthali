@@ -304,7 +304,12 @@ async function main() {
     "models-directory-agent@sthali.com",
     "benchmarks-agent@sthali.com",
     "word-counter-agent@sthali.com",
-    "number-to-words-agent@sthali.com"
+    "number-to-words-agent@sthali.com",
+    "character-counter-agent@sthali.com",
+    "roman-numeral-converter-agent@sthali.com",
+    "markdown-preview-agent@sthali.com",
+    "case-converter-agent@sthali.com",
+    "readability-score-agent@sthali.com"
   ];
   const discoveredAddresses = new Set((allAgents.agents ?? []).map((agent) => agent.agent_address));
   const missingManaged = managedAddresses.filter((address) => !discoveredAddresses.has(address));
@@ -344,6 +349,11 @@ async function main() {
   );
 
   const extraManagedChecks = [
+    { name: "character counter", to_address: "character-counter-agent@sthali.com", intent: "count_characters", payload: { text: "A 👋", smoke_run: runId }, ok: (r) => r?.ok === true && r.metrics?.characters === 3 && r.metrics?.utf16_code_units === 4 },
+    { name: "Roman numeral converter", to_address: "roman-numeral-converter-agent@sthali.com", intent: "convert_roman_numeral", payload: { value: "MCMXCIV", smoke_run: runId }, ok: (r) => r?.ok === true && r.integer === 1994 },
+    { name: "Markdown preview", to_address: "markdown-preview-agent@sthali.com", intent: "render_markdown_preview", payload: { markdown: "# Safe\n\n**Preview** <script>x</script>", smoke_run: runId }, ok: (r) => r?.ok === true && r.html?.includes("<h1>Safe</h1>") && r.html?.includes("&lt;script&gt;") && !r.html?.includes("<script>") },
+    { name: "case converter", to_address: "case-converter-agent@sthali.com", intent: "convert_text_case", payload: { text: "Hello Sthali Agent", mode: "snake", smoke_run: runId }, ok: (r) => r?.ok === true && r.output === "hello_sthali_agent" },
+    { name: "readability", to_address: "readability-score-agent@sthali.com", intent: "check_readability", payload: { text: "Clear writing helps readers. Short sentences improve understanding.", smoke_run: runId }, ok: (r) => r?.ok === true && r.metrics?.sentences === 2 && typeof r.metrics?.flesch_reading_ease === "number" },
     {
       name: "number to words",
       to_address: "number-to-words-agent@sthali.com",

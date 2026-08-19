@@ -2,10 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  caseConverterResponse,
+  characterCounterResponse,
   getUtilityAgentById,
   getUtilityAgentBySlug,
   isUtilityAgentId,
+  markdownPreviewResponse,
   numberToWordsResponse,
+  readabilityResponse,
+  romanNumeralResponse,
   utilityAgents,
   wordCounterResponse
 } from "../worker/utility-agent-catalog.ts";
@@ -19,6 +24,27 @@ test("utility agent ids, slugs, addresses, and intents are unique", () => {
   assert.equal(getUtilityAgentBySlug(agent.slug)?.id, agent.id);
   assert.equal(isUtilityAgentId(agent.id), true);
   assert.equal(isUtilityAgentId("agt_missing"), false);
+});
+
+test("next five text agents execute their distinct deterministic contracts", () => {
+  const characters = characterCounterResponse("count_characters", { text: "A 👋" });
+  assert.equal(characters.metrics.characters, 3);
+  assert.equal(characters.metrics.utf16_code_units, 4);
+
+  assert.equal(romanNumeralResponse("convert_roman_numeral", { value: 1994 }).roman, "MCMXCIV");
+  assert.equal(romanNumeralResponse("convert_roman_numeral", { value: "MCMXCIV" }).integer, 1994);
+  assert.equal(romanNumeralResponse("convert_roman_numeral", { value: "IIII" }).ok, false);
+
+  const markdown = markdownPreviewResponse("render_markdown_preview", { markdown: "# Hi\n\n**Safe** <script>x</script>" });
+  assert.match(markdown.html, /<h1>Hi<\/h1>/);
+  assert.match(markdown.html, /<strong>Safe<\/strong> &lt;script&gt;/);
+  assert.doesNotMatch(markdown.html, /<script>/);
+
+  assert.equal(caseConverterResponse("convert_text_case", { text: "Hello Sthali Agent", mode: "snake" }).output, "hello_sthali_agent");
+  const readability = readabilityResponse("check_readability", { text: "Clear writing helps readers. Short sentences improve understanding." });
+  assert.equal(readability.ok, true);
+  assert.equal(readability.metrics.sentences, 2);
+  assert.equal(typeof readability.metrics.flesch_reading_ease, "number");
 });
 
 test("number-to-words converts decimals and supported currencies without floating-point parsing", () => {

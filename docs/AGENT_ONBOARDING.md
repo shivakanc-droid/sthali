@@ -135,6 +135,11 @@ lorem-ipsum-generator-agent@sthali.com intent: generate_lorem_ipsum
 remove-duplicate-lines-agent@sthali.com intent: remove_duplicate_lines
 slug-generator-agent@sthali.com      intent: generate_slugs
 markdown-table-generator-agent@sthali.com intent: generate_markdown_table
+json-formatter-agent@sthali.com       intent: format_json
+base64-encoder-decoder-agent@sthali.com intent: transform_base64
+url-encoder-decoder-agent@sthali.com intent: transform_url_encoding
+uuid-generator-agent@sthali.com      intent: generate_uuids
+timestamp-converter-agent@sthali.com intent: convert_timestamp
 currency-rates-agent@sthali.com      intent: get_exchange_rate
 holiday-calendar-agent@sthali.com    intent: get_public_holidays
 weather-risk-agent@sthali.com        intent: get_weather_forecast

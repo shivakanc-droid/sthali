@@ -249,7 +249,12 @@ async function main() {
     ["generate lorem ipsum placeholder text", "lorem-ipsum-generator-agent@sthali.com"],
     ["remove duplicate lines from this list", "remove-duplicate-lines-agent@sthali.com"],
     ["create an SEO URL slug", "slug-generator-agent@sthali.com"],
-    ["convert this CSV to a Markdown table", "markdown-table-generator-agent@sthali.com"]
+    ["convert this CSV to a Markdown table", "markdown-table-generator-agent@sthali.com"],
+    ["format and validate this JSON", "json-formatter-agent@sthali.com"],
+    ["encode this text as Base64", "base64-encoder-decoder-agent@sthali.com"],
+    ["URL encode this URI component", "url-encoder-decoder-agent@sthali.com"],
+    ["generate secure UUID v4 identifiers", "uuid-generator-agent@sthali.com"],
+    ["convert this Unix timestamp to ISO 8601", "timestamp-converter-agent@sthali.com"]
   ];
   for (const [task, address] of newAgentRoutes) {
     const routed = await request("/route-task", {
@@ -333,7 +338,12 @@ async function main() {
     "lorem-ipsum-generator-agent@sthali.com",
     "remove-duplicate-lines-agent@sthali.com",
     "slug-generator-agent@sthali.com",
-    "markdown-table-generator-agent@sthali.com"
+    "markdown-table-generator-agent@sthali.com",
+    "json-formatter-agent@sthali.com",
+    "base64-encoder-decoder-agent@sthali.com",
+    "url-encoder-decoder-agent@sthali.com",
+    "uuid-generator-agent@sthali.com",
+    "timestamp-converter-agent@sthali.com"
   ];
   const discoveredAddresses = new Set((allAgents.agents ?? []).map((agent) => agent.agent_address));
   const missingManaged = managedAddresses.filter((address) => !discoveredAddresses.has(address));
@@ -383,6 +393,11 @@ async function main() {
     { name: "duplicate line remover", to_address: "remove-duplicate-lines-agent@sthali.com", intent: "remove_duplicate_lines", payload: { text: "Alpha\nbeta\nalpha", case_sensitive: false, smoke_run: runId }, ok: (r) => r?.ok === true && r.output === "Alpha\nbeta" && r.removed_lines === 1 },
     { name: "slug generator", to_address: "slug-generator-agent@sthali.com", intent: "generate_slugs", payload: { items: ["Café Sthali", "Agent Exchange"], smoke_run: runId }, ok: (r) => r?.ok === true && r.items?.[0]?.slug === "cafe-sthali" && r.items?.[1]?.slug === "agent-exchange" },
     { name: "Markdown table generator", to_address: "markdown-table-generator-agent@sthali.com", intent: "generate_markdown_table", payload: { text: "Name,Value\nSthali,\"Agent | Exchange\"", smoke_run: runId }, ok: (r) => r?.ok === true && r.rows === 2 && r.columns === 2 && r.markdown?.includes("Agent \\| Exchange") },
+    { name: "JSON formatter", to_address: "json-formatter-agent@sthali.com", intent: "format_json", payload: { text: '{"agent":"Sthali","active":true}', indent: 2, smoke_run: runId }, ok: (r) => r?.ok === true && r.valid === true && r.type === "object" && r.compact === '{"agent":"Sthali","active":true}' },
+    { name: "Base64 codec", to_address: "base64-encoder-decoder-agent@sthali.com", intent: "transform_base64", payload: { action: "encode", text: "Hello Sthali", smoke_run: runId }, ok: (r) => r?.ok === true && r.output === "SGVsbG8gU3RoYWxp" },
+    { name: "URL codec", to_address: "url-encoder-decoder-agent@sthali.com", intent: "transform_url_encoding", payload: { action: "encode", mode: "component", text: "Sthali agents & tools", smoke_run: runId }, ok: (r) => r?.ok === true && r.output === "Sthali%20agents%20%26%20tools" },
+    { name: "UUID generator", to_address: "uuid-generator-agent@sthali.com", intent: "generate_uuids", payload: { count: 2, format: "standard", smoke_run: runId }, ok: (r) => r?.ok === true && r.uuids?.length === 2 && r.uuids.every((value) => /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) },
+    { name: "timestamp converter", to_address: "timestamp-converter-agent@sthali.com", intent: "convert_timestamp", payload: { value: 0, unit: "seconds", smoke_run: runId }, ok: (r) => r?.ok === true && r.iso_8601 === "1970-01-01T00:00:00.000Z" && r.epoch_milliseconds === 0 },
     {
       name: "number to words",
       to_address: "number-to-words-agent@sthali.com",

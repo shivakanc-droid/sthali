@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  base64CodecResponse,
   caseConverterResponse,
   characterCounterResponse,
   getUtilityAgentById,
   getUtilityAgentBySlug,
   isUtilityAgentId,
+  jsonFormatterResponse,
   loremIpsumResponse,
   markdownPreviewResponse,
   markdownTableResponse,
@@ -16,7 +18,10 @@ import {
   romanNumeralResponse,
   slugGeneratorResponse,
   textDiffResponse,
+  timestampConverterResponse,
+  urlCodecResponse,
   utilityAgents,
+  uuidGeneratorResponse,
   wordCounterResponse
 } from "../worker/utility-agent-catalog.ts";
 
@@ -52,6 +57,34 @@ test("five additional text agents execute bounded end-to-end payload contracts",
   assert.equal(table.ok, true);
   assert.match(table.markdown, /Agent \\| exchange/);
   assert.equal(markdownTableResponse("generate_markdown_table", { text: 'a,"broken' }).ok, false);
+});
+
+test("five developer utility agents execute their independent contracts", () => {
+  const json = jsonFormatterResponse("format_json", { text: '{"agent":"Sthali","active":true}', indent: 2 });
+  assert.equal(json.ok, true);
+  assert.equal(json.type, "object");
+  assert.match(json.formatted, /\n  "agent": "Sthali"/);
+  assert.equal(jsonFormatterResponse("format_json", { text: "{" }).ok, false);
+
+  const encoded = base64CodecResponse("transform_base64", { action: "encode", text: "Hello 👋" });
+  assert.equal(encoded.ok, true);
+  assert.equal(base64CodecResponse("transform_base64", { action: "decode", text: encoded.output }).output, "Hello 👋");
+  assert.equal(base64CodecResponse("transform_base64", { action: "decode", text: "%%%" }).ok, false);
+
+  const urlEncoded = urlCodecResponse("transform_url_encoding", { action: "encode", mode: "component", text: "Sthali agents & tools" });
+  assert.equal(urlEncoded.output, "Sthali%20agents%20%26%20tools");
+  assert.equal(urlCodecResponse("transform_url_encoding", { action: "decode", mode: "component", text: urlEncoded.output }).output, "Sthali agents & tools");
+
+  const uuids = uuidGeneratorResponse("generate_uuids", { count: 3, format: "standard" });
+  assert.equal(uuids.ok, true);
+  assert.equal(uuids.uuids.length, 3);
+  assert.equal(new Set(uuids.uuids).size, 3);
+  for (const uuid of uuids.uuids) assert.match(uuid, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+
+  const timestamp = timestampConverterResponse("convert_timestamp", { value: 0, unit: "seconds" });
+  assert.equal(timestamp.iso_8601, "1970-01-01T00:00:00.000Z");
+  assert.equal(timestamp.epoch_milliseconds, 0);
+  assert.equal(timestampConverterResponse("convert_timestamp", { value: "2026-08-19" }).ok, false);
 });
 
 test("next five text agents execute their distinct deterministic contracts", () => {

@@ -105,6 +105,41 @@ export const utilityAgents = [
     purpose: "Converts structured rows, CSV, or tab-separated text into a Markdown table.",
     description: "Sthali-managed deterministic table generator with quoted-delimiter parsing, cell escaping, and alignment controls.",
     source: "Sthali deterministic tabular text conversion", examplePayload: { rows: [["Name", "Role"], ["Sthali", "Exchange"]], header: true }
+  },
+  {
+    id: "agt_utility_json_formatter", slug: "json-formatter-agent", address: "json-formatter-agent@sthali.com",
+    displayName: "JSON Formatter and Validator Agent", category: "developer", intent: "format_json",
+    purpose: "Validates JSON text and returns a consistently formatted representation.",
+    description: "Sthali-managed bounded JSON parser and formatter with configurable indentation and structural metadata.",
+    source: "ECMAScript JSON parser", examplePayload: { text: "{\"agent\":\"Sthali\"}", indent: 2 }
+  },
+  {
+    id: "agt_utility_base64_codec", slug: "base64-encoder-decoder-agent", address: "base64-encoder-decoder-agent@sthali.com",
+    displayName: "Base64 Encoder and Decoder Agent", category: "developer", intent: "transform_base64",
+    purpose: "Encodes UTF-8 text to Base64 or decodes Base64 back to UTF-8 text.",
+    description: "Sthali-managed bounded Base64 codec with strict input validation and UTF-8 decoding.",
+    source: "Web Platform Base64 and UTF-8 codecs", examplePayload: { action: "encode", text: "Hello Sthali" }
+  },
+  {
+    id: "agt_utility_url_codec", slug: "url-encoder-decoder-agent", address: "url-encoder-decoder-agent@sthali.com",
+    displayName: "URL Encoder and Decoder Agent", category: "developer", intent: "transform_url_encoding",
+    purpose: "Encodes or decodes URL components and complete URLs.",
+    description: "Sthali-managed bounded percent-encoding codec with explicit component and full-URL modes.",
+    source: "ECMAScript URI encoding rules", examplePayload: { action: "encode", mode: "component", text: "Sthali agents & tools" }
+  },
+  {
+    id: "agt_utility_uuid_generator", slug: "uuid-generator-agent", address: "uuid-generator-agent@sthali.com",
+    displayName: "UUID Generator Agent", category: "developer", intent: "generate_uuids",
+    purpose: "Generates one or more cryptographically secure UUID version 4 identifiers.",
+    description: "Sthali-managed UUID v4 generator backed by the Workers Web Crypto runtime with explicit count and formatting limits.",
+    source: "Web Crypto crypto.randomUUID", examplePayload: { count: 3, format: "standard" }
+  },
+  {
+    id: "agt_utility_timestamp_converter", slug: "timestamp-converter-agent", address: "timestamp-converter-agent@sthali.com",
+    displayName: "Timestamp Converter Agent", category: "developer", intent: "convert_timestamp",
+    purpose: "Converts ISO 8601, Unix-second, and Unix-millisecond timestamps into canonical UTC forms.",
+    description: "Sthali-managed timestamp converter with explicit numeric-unit handling and UTC calendar components.",
+    source: "ECMAScript Date UTC conversion", examplePayload: { value: 0, unit: "seconds" }
   }
 ] as const satisfies readonly UtilityAgentDefinition[];
 
@@ -143,6 +178,11 @@ export function utilityAgentResponse(
   if (agentId === "agt_utility_remove_duplicate_lines") return removeDuplicateLinesResponse(intent, payload);
   if (agentId === "agt_utility_slug_generator") return slugGeneratorResponse(intent, payload);
   if (agentId === "agt_utility_markdown_table") return markdownTableResponse(intent, payload);
+  if (agentId === "agt_utility_json_formatter") return jsonFormatterResponse(intent, payload);
+  if (agentId === "agt_utility_base64_codec") return base64CodecResponse(intent, payload);
+  if (agentId === "agt_utility_url_codec") return urlCodecResponse(intent, payload);
+  if (agentId === "agt_utility_uuid_generator") return uuidGeneratorResponse(intent, payload);
+  if (agentId === "agt_utility_timestamp_converter") return timestampConverterResponse(intent, payload);
 
   return {
     ok: false,
@@ -447,6 +487,126 @@ export function markdownTableResponse(intent: string, payload: Record<string, un
   const divider = header.map((_, index) => alignments[index] === "center" ? ":---:" : alignments[index] === "right" ? "---:" : ":---");
   const markdownRows = [header, divider, ...body].map((row) => `| ${row.map(escapeMarkdownCell).join(" | ")} |`);
   return utilitySuccess(agent, intent, { rows: rows.length, columns, header: hasHeader, markdown: markdownRows.join("\n") });
+}
+
+export function jsonFormatterResponse(intent: string, payload: Record<string, unknown>) {
+  const agent = utilityAgents[12];
+  const text = boundedText(agent, intent, payload.text, "text");
+  if (typeof text !== "string") return text;
+  const indent = payload.indent === undefined ? 2 : payload.indent;
+  if (typeof indent !== "number" || !Number.isInteger(indent) || indent < 0 || indent > 8) {
+    return utilityError(agent, intent, "payload.indent must be an integer from 0 to 8");
+  }
+  try {
+    const value: unknown = JSON.parse(text);
+    const type = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+    return utilitySuccess(agent, intent, {
+      valid: true,
+      type,
+      formatted: JSON.stringify(value, null, indent),
+      compact: JSON.stringify(value)
+    });
+  } catch (error) {
+    return utilityError(agent, intent, error instanceof SyntaxError ? `Invalid JSON: ${error.message}` : "Invalid JSON");
+  }
+}
+
+export function base64CodecResponse(intent: string, payload: Record<string, unknown>) {
+  const agent = utilityAgents[13];
+  const text = boundedText(agent, intent, payload.text, "text", 100_000);
+  if (typeof text !== "string") return text;
+  const action = payload.action;
+  if (action !== "encode" && action !== "decode") return utilityError(agent, intent, "payload.action must be encode or decode");
+  if (action === "encode") {
+    const bytes = new TextEncoder().encode(text);
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return utilitySuccess(agent, intent, { action, input_encoding: "utf-8", output_encoding: "base64", bytes: bytes.length, output: btoa(binary) });
+  }
+  const normalized = text.replace(/\s/g, "");
+  if (normalized.length % 4 === 1 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(normalized)) {
+    return utilityError(agent, intent, "payload.text must be valid standard Base64");
+  }
+  try {
+    const binary = atob(normalized);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const output = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return utilitySuccess(agent, intent, { action, input_encoding: "base64", output_encoding: "utf-8", bytes: bytes.length, output });
+  } catch {
+    return utilityError(agent, intent, "Base64 payload does not decode to valid UTF-8 text");
+  }
+}
+
+export function urlCodecResponse(intent: string, payload: Record<string, unknown>) {
+  const agent = utilityAgents[14];
+  const text = boundedText(agent, intent, payload.text, "text");
+  if (typeof text !== "string") return text;
+  const action = payload.action;
+  const mode = payload.mode === undefined ? "component" : payload.mode;
+  if (action !== "encode" && action !== "decode") return utilityError(agent, intent, "payload.action must be encode or decode");
+  if (mode !== "component" && mode !== "url") return utilityError(agent, intent, "payload.mode must be component or url");
+  try {
+    const output = action === "encode"
+      ? mode === "component" ? encodeURIComponent(text) : encodeURI(text)
+      : mode === "component" ? decodeURIComponent(text) : decodeURI(text);
+    return utilitySuccess(agent, intent, { action, mode, output });
+  } catch {
+    return utilityError(agent, intent, "payload.text contains malformed URI encoding or invalid Unicode");
+  }
+}
+
+export function uuidGeneratorResponse(intent: string, payload: Record<string, unknown>) {
+  const agent = utilityAgents[15];
+  if (intent !== agent.intent) return utilityError(agent, intent, `Unsupported intent. Use ${agent.intent}.`);
+  const count = integerPayload(payload.count, 1);
+  const format = payload.format === undefined ? "standard" : payload.format;
+  if (count < 1 || count > 100) return utilityError(agent, intent, "payload.count must be an integer from 1 to 100");
+  if (format !== "standard" && format !== "compact") return utilityError(agent, intent, "payload.format must be standard or compact");
+  const uppercase = payload.uppercase === true;
+  const uuids = Array.from({ length: count }, () => {
+    const value = crypto.randomUUID();
+    const formatted = format === "compact" ? value.replace(/-/g, "") : value;
+    return uppercase ? formatted.toUpperCase() : formatted;
+  });
+  return utilitySuccess(agent, intent, { version: 4, count, format, uppercase, uuids, output: uuids.join("\n") });
+}
+
+export function timestampConverterResponse(intent: string, payload: Record<string, unknown>) {
+  const agent = utilityAgents[16];
+  if (intent !== agent.intent) return utilityError(agent, intent, `Unsupported intent. Use ${agent.intent}.`);
+  const raw = payload.value;
+  if (typeof raw !== "string" && typeof raw !== "number") return utilityError(agent, intent, "payload.value must be an ISO 8601 string or finite Unix timestamp");
+  let milliseconds: number;
+  let inputType: "iso8601" | "unix_seconds" | "unix_milliseconds";
+  const numeric = typeof raw === "number" || /^-?\d+(?:\.\d+)?$/.test(raw.trim());
+  if (numeric) {
+    const value = Number(raw);
+    if (!Number.isFinite(value)) return utilityError(agent, intent, "payload.value must be finite");
+    const unit = payload.unit === undefined || payload.unit === "auto" ? (Math.abs(value) < 100_000_000_000 ? "seconds" : "milliseconds") : payload.unit;
+    if (unit !== "seconds" && unit !== "milliseconds") return utilityError(agent, intent, "payload.unit must be auto, seconds, or milliseconds");
+    milliseconds = unit === "seconds" ? value * 1000 : value;
+    inputType = unit === "seconds" ? "unix_seconds" : "unix_milliseconds";
+  } else {
+    if (payload.unit !== undefined && payload.unit !== "auto") return utilityError(agent, intent, "payload.unit only applies to numeric timestamps");
+    const value = raw.trim();
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) {
+      return utilityError(agent, intent, "String timestamps must be ISO 8601 with an explicit Z or numeric offset");
+    }
+    milliseconds = Date.parse(value);
+    inputType = "iso8601";
+  }
+  const date = new Date(milliseconds);
+  if (!Number.isFinite(milliseconds) || Number.isNaN(date.getTime())) return utilityError(agent, intent, "Timestamp is outside the supported Date range");
+  return utilitySuccess(agent, intent, {
+    input_type: inputType,
+    iso_8601: date.toISOString(),
+    epoch_seconds: date.getTime() / 1000,
+    epoch_milliseconds: date.getTime(),
+    utc: {
+      year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate(),
+      hour: date.getUTCHours(), minute: date.getUTCMinutes(), second: date.getUTCSeconds(), millisecond: date.getUTCMilliseconds()
+    }
+  });
 }
 
 const smallNumbers = [

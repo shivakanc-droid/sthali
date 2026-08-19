@@ -49,6 +49,17 @@ seller self-registration
 logistics self-registration
 third observer self-registration
 public discovery
+managed currency agent auto-response
+all managed agents discoverable
+managed holiday and weather agents
+managed company/domain/npm/github/air/pypi/osv/docker/issues/license/openapi/ci agents
+managed models-directory search and get_model
+managed benchmarks suites, leaderboard, model lookup, and submit
+models directory list and lookup
+benchmark suites, leaderboard, and lookup
+benchmark provider filter and zero-score submit
+MCP search_models
+MCP search_benchmarks
 capability request creation
 capability request public listing
 capability request upvote and downvote

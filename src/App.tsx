@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState, type ComponentProps, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from "react";
 import {
   ArrowRight,
   BookOpen,
+  ChartColumn,
   Copy,
+  Cpu,
   Eye,
   EyeOff,
+  ExternalLink,
   FileJson2,
   Inbox,
   KeyRound,
@@ -20,12 +23,21 @@ import {
   ThumbsDown,
   ThumbsUp
 } from "lucide-react";
-import { toast, Toaster } from "sonner";
+import { toast } from "sonner";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator
+} from "@/components/ui/breadcrumb";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { blogPosts, getBlogPost, type BlogPost } from "../worker/blog-posts";
+import { ConsoleShell } from "@/components/console-shell";
 import {
   Card,
   CardAction,
@@ -56,8 +68,9 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { getConsoleNavItem, parseConsoleView, type ConsoleView } from "@/lib/console-nav";
 import { cn } from "@/lib/utils";
 
 type Agent = {
@@ -134,7 +147,154 @@ type CapabilityRequest = {
   updated_at: string;
 };
 
+type ModelsDevRow = {
+  id: string;
+  name: string;
+  lab: string;
+  family: string | null;
+  description: string | null;
+  providers: number;
+  context: number | null;
+  output: number | null;
+  reasoning: boolean;
+  tool_call: boolean;
+  structured_output: boolean | null;
+  temperature: boolean | null;
+  open_weights: boolean;
+  release_date: string | null;
+  last_updated: string | null;
+  modalities: {
+    input: string[];
+    output: string[];
+  };
+  price: { input: number | null; output: number | null } | null;
+  source_url: string;
+};
+
+type ModelsDevOffer = {
+  provider_id: string;
+  provider_name: string;
+  provider_doc: string | null;
+  provider_page: string;
+  model_id: string;
+  context: number | null;
+  output: number | null;
+  cost_input: number | null;
+  cost_output: number | null;
+  reasoning: boolean | null;
+  tool_call: boolean | null;
+};
+
+type ModelsListResponse = {
+  source: string;
+  attribution_url: string;
+  license: string;
+  fetched_at: string;
+  total: number;
+  page: number;
+  page_size: number;
+  has_more: boolean;
+  models: ModelsDevRow[];
+};
+
+type ModelsLookupResponse = {
+  source: string;
+  attribution_url: string;
+  fetched_at: string;
+  model: ModelsDevRow;
+  providers: ModelsDevOffer[];
+  benchmarks?: BenchmarkScore[];
+};
+
+type BenchmarkScore = {
+  id: string;
+  model_id: string;
+  suite: string;
+  suite_version: string | null;
+  metric: string;
+  value: number;
+  unit: string;
+  higher_is_better: boolean;
+  benchmark_provider_id: string;
+  benchmark_provider_name: string;
+  harness: string | null;
+  source_url: string | null;
+  as_of: string;
+};
+
+type BenchmarkLeaderboardEntry = BenchmarkScore & {
+  model_name: string | null;
+  lab: string | null;
+};
+
+type BenchmarkLeaderboardResponse = {
+  suite: string;
+  suite_meta: {
+    id: string;
+    label: string;
+    category: string;
+    higher_is_better: boolean;
+    unit: string;
+    core: boolean;
+    description: string;
+  } | null;
+  page: number;
+  page_size: number;
+  total: number;
+  has_more: boolean;
+  models: BenchmarkLeaderboardEntry[];
+};
+
+type BenchmarkSuitesResponse = {
+  suites: Array<{
+    id: string;
+    label: string;
+    category: string;
+    higher_is_better: boolean;
+    unit: string;
+    core: boolean;
+    description: string;
+  }>;
+};
+
+type TaskRouteRecommendation = {
+  agent: Agent;
+  score: number;
+  matched_terms: string[];
+  reason: string;
+  suggested_request: {
+    to_address: string;
+    intent: string;
+    payload: Record<string, unknown>;
+  };
+};
+
+type TaskRouteResult = {
+  task: string;
+  recommendations: TaskRouteRecommendation[];
+  next_steps: string[];
+  quick_register: {
+    endpoint: string;
+    minimal_payload: Record<string, unknown>;
+  };
+};
+
 const apiBase = "/v1";
+
+const MODEL_LAB_OPTIONS = [
+  "anthropic",
+  "openai",
+  "google",
+  "meta",
+  "deepseek",
+  "mistral",
+  "xai",
+  "alibaba",
+  "moonshotai",
+  "cohere",
+  "nvidia",
+  "zhipuai"
+] as const;
 const defaultResponse = {
   serviceable: true,
   estimated_price: "non-binding estimate",
@@ -157,11 +317,50 @@ export default function App() {
   const [capabilityQuery, setCapabilityQuery] = useState("");
   const [selectedCapabilityRequestId, setSelectedCapabilityRequestId] = useState("");
   const [agentQuery, setAgentQuery] = useState("");
+  const [taskText, setTaskText] = useState("debug this CI log and identify the likely root cause");
+  const [taskPayload, setTaskPayload] = useState(JSON.stringify({
+    log: "npm ERR! ERESOLVE dependency conflict"
+  }, null, 2));
+  const [taskRoute, setTaskRoute] = useState<TaskRouteResult | null>(null);
   const [requestIntent, setRequestIntent] = useState("structured_request");
   const [requestPayload, setRequestPayload] = useState(JSON.stringify(examplePayloadForIntent("structured_request"), null, 2));
   const [loadingAgents, setLoadingAgents] = useState(true);
   const [loadingCapabilities, setLoadingCapabilities] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [modelQuery, setModelQuery] = useState("");
+  const [modelLab, setModelLab] = useState("");
+  const [modelOpenWeightsOnly, setModelOpenWeightsOnly] = useState(false);
+  const [modelCapability, setModelCapability] = useState<
+    "" | "tool_call" | "reasoning" | "vision" | "audio" | "video" | "embedding" | "reranking"
+  >("");
+  const [modelsPage, setModelsPage] = useState(1);
+  const [modelsResult, setModelsResult] = useState<ModelsListResponse | null>(null);
+  const [selectedModelId, setSelectedModelId] = useState("");
+  const [selectedModelDetail, setSelectedModelDetail] = useState<ModelsLookupResponse | null>(null);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [loadingModelDetail, setLoadingModelDetail] = useState(false);
+  const modelsSearchReady = useRef(false);
+  const [benchmarkSuite, setBenchmarkSuite] = useState("swe-bench-verified");
+  const [benchmarkQuery, setBenchmarkQuery] = useState("");
+  const [benchmarkLab, setBenchmarkLab] = useState("");
+  const [benchmarkProvider, setBenchmarkProvider] = useState("");
+  const [benchmarkPage, setBenchmarkPage] = useState(1);
+  const [benchmarkSuites, setBenchmarkSuites] = useState<BenchmarkSuitesResponse["suites"]>([]);
+  const [benchmarkResult, setBenchmarkResult] = useState<BenchmarkLeaderboardResponse | null>(null);
+  const [selectedBenchmarkModelId, setSelectedBenchmarkModelId] = useState("");
+  const [loadingBenchmarks, setLoadingBenchmarks] = useState(false);
+  const benchmarksSearchReady = useRef(false);
+  const [activeView, setActiveView] = useState<ConsoleView>(() => {
+    return parseConsoleView(new URLSearchParams(window.location.search).get("view")) ?? "task";
+  });
+  const activeNav = getConsoleNavItem(activeView);
+
+  const selectedBenchmarkRow = useMemo(
+    () => benchmarkResult?.models.find((row) => row.model_id === selectedBenchmarkModelId) ?? null,
+    [benchmarkResult, selectedBenchmarkModelId]
+  );
+
+  const hasModelCapabilityFilter = Boolean(modelCapability) || modelOpenWeightsOnly;
 
   const selectedAgent = useMemo(
     () => agents.find((agent) => agent.agent_id === selectedAgentId) ?? agents[0] ?? null,
@@ -210,21 +409,30 @@ export default function App() {
     [capabilityRequests, selectedCapabilityRequestId]
   );
 
-  const systemAgents = useMemo(
-    () => agents.filter((agent) => agent.trust_badges.includes("system_agent")).length,
-    [agents]
-  );
-
-  const hostedInboxAgents = useMemo(
-    () => agents.filter((agent) => agent.inbox.mode === "hosted").length,
-    [agents]
-  );
-
   useEffect(() => {
     localStorage.removeItem("sthali_api_key");
     void refreshAgents();
     void refreshCapabilityRequests();
+    void refreshBenchmarkSuites();
   }, []);
+
+  useEffect(() => {
+    const delayMs = modelsSearchReady.current ? 280 : 0;
+    modelsSearchReady.current = true;
+    const timer = window.setTimeout(() => {
+      void refreshModels(1);
+    }, delayMs);
+    return () => window.clearTimeout(timer);
+  }, [modelQuery, modelLab, modelCapability, modelOpenWeightsOnly]);
+
+  useEffect(() => {
+    const delayMs = benchmarksSearchReady.current ? 280 : 0;
+    benchmarksSearchReady.current = true;
+    const timer = window.setTimeout(() => {
+      void refreshBenchmarks(1);
+    }, delayMs);
+    return () => window.clearTimeout(timer);
+  }, [benchmarkSuite, benchmarkQuery, benchmarkLab, benchmarkProvider]);
 
   useEffect(() => {
     if (!selectedAgentId && agents[0]) setSelectedAgentId(agents[0].agent_id);
@@ -247,6 +455,14 @@ export default function App() {
     setRequestPayload(JSON.stringify(examplePayloadForIntent(nextIntent), null, 2));
   }, [selectedAgent]);
 
+  useEffect(() => {
+    if (!selectedModelId) {
+      setSelectedModelDetail(null);
+      return;
+    }
+    void loadModelDetail(selectedModelId);
+  }, [selectedModelId]);
+
   async function refreshAgents() {
     setLoadingAgents(true);
     try {
@@ -260,6 +476,82 @@ export default function App() {
     }
   }
 
+  async function refreshModels(page = modelsPage) {
+    setLoadingModels(true);
+    try {
+      const params = new URLSearchParams();
+      if (modelQuery.trim()) params.set("q", modelQuery.trim());
+      if (modelLab.trim()) params.set("lab", modelLab.trim());
+      if (modelOpenWeightsOnly) params.set("open_weights", "true");
+      if (modelCapability === "tool_call") params.set("tool_call", "true");
+      else if (modelCapability === "reasoning") params.set("reasoning", "true");
+      else if (modelCapability === "vision") params.set("modality", "vision");
+      else if (modelCapability === "audio") params.set("modality", "audio");
+      else if (modelCapability === "video") params.set("modality", "video");
+      else if (modelCapability === "embedding") params.set("embedding", "true");
+      else if (modelCapability === "reranking") params.set("reranking", "true");
+      params.set("page", String(page));
+      params.set("page_size", "25");
+      const data = await api<ModelsListResponse>(`/models?${params.toString()}`);
+      setModelsResult(data);
+      setModelsPage(data.page);
+      if (!selectedModelId && data.models[0]) {
+        setSelectedModelId(data.models[0].id);
+      }
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setLoadingModels(false);
+    }
+  }
+
+  async function loadModelDetail(modelId: string) {
+    setLoadingModelDetail(true);
+    try {
+      const data = await api<ModelsLookupResponse>(`/models/lookup?id=${encodeURIComponent(modelId)}`);
+      setSelectedModelDetail(data);
+    } catch (error) {
+      setSelectedModelDetail(null);
+      toast.error(errorMessage(error));
+    } finally {
+      setLoadingModelDetail(false);
+    }
+  }
+
+  async function refreshBenchmarkSuites() {
+    try {
+      const data = await api<BenchmarkSuitesResponse>("/benchmarks/suites");
+      setBenchmarkSuites(Array.isArray(data.suites) ? data.suites : []);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  }
+
+  async function refreshBenchmarks(page = benchmarkPage) {
+    setLoadingBenchmarks(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("suite", benchmarkSuite || "swe-bench-verified");
+      if (benchmarkQuery.trim()) params.set("q", benchmarkQuery.trim());
+      if (benchmarkLab.trim()) params.set("lab", benchmarkLab.trim());
+      if (benchmarkProvider.trim()) params.set("benchmark_provider", benchmarkProvider.trim());
+      params.set("page", String(page));
+      params.set("page_size", "25");
+      const data = await api<BenchmarkLeaderboardResponse>(`/benchmarks?${params.toString()}`);
+      setBenchmarkResult(data);
+      setBenchmarkPage(data.page);
+      if (!selectedBenchmarkModelId && data.models[0]) {
+        setSelectedBenchmarkModelId(data.models[0].model_id);
+      } else if (selectedBenchmarkModelId && !data.models.some((row) => row.model_id === selectedBenchmarkModelId)) {
+        setSelectedBenchmarkModelId(data.models[0]?.model_id ?? "");
+      }
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setLoadingBenchmarks(false);
+    }
+  }
+
   async function refreshCapabilityRequests() {
     setLoadingCapabilities(true);
     try {
@@ -269,6 +561,59 @@ export default function App() {
       toast.error(errorMessage(error));
     } finally {
       setLoadingCapabilities(false);
+    }
+  }
+
+  async function routeTask(formData: FormData) {
+    setBusy(true);
+    try {
+      const payload = parseTextareaJson(String(formData.get("payload")));
+      const data = await api<TaskRouteResult>("/route-task", {
+        method: "POST",
+        body: JSON.stringify({
+          task: String(formData.get("task")),
+          payload
+        })
+      });
+      setTaskRoute(data);
+      toast.success(data.recommendations.length ? "Task routed" : "No matching agent yet");
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function useTaskRecommendation(recommendation: TaskRouteRecommendation) {
+    setSelectedAgentId(recommendation.agent.agent_id);
+    setRequestIntent(recommendation.suggested_request.intent);
+    setRequestPayload(JSON.stringify(recommendation.suggested_request.payload, null, 2));
+    setAgentQuery(recommendation.agent.agent_address);
+    toast.success("Loaded suggested request");
+  }
+
+  async function quickRegisterAgent(formData: FormData) {
+    setBusy(true);
+    try {
+      const data = await api<RegistrationState>("/agents/quick-register", {
+        method: "POST",
+        body: JSON.stringify({
+          purpose: String(formData.get("purpose")),
+          owner_domain: String(formData.get("owner_domain")),
+          owner_country: String(formData.get("owner_country"))
+        })
+      });
+      setRegistration(data);
+      setApiKey(data.api_key);
+      setShowRegistrationKey(false);
+      setShowSessionKey(false);
+      setActiveAgent(data.agent);
+      await refreshAgents();
+      toast.success("Agent quick-registered");
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -466,123 +811,173 @@ export default function App() {
   }
 
   return (
-    <main className="sthali-shell">
-      <Toaster />
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
-        <header className="sthali-header">
-          <div className="flex min-w-0 flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground">
-                S
-              </div>
-              <div className="min-w-0">
-                <h1 className="text-2xl font-semibold tracking-normal">Sthali</h1>
-              </div>
-              <Badge variant="secondary">Agent Exchange V0</Badge>
-              <Badge variant="outline">Hosted inbox active</Badge>
-            </div>
-            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-              Agent Cards, hosted inboxes, and private structured requests.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <a className={cn(buttonVariants({ variant: "outline" }))} href="/blog/list?source=app">
-              <BookOpen data-icon="inline-start" />
-              Blog
-            </a>
-            <Button
-              variant="outline"
-              onClick={() => {
-                void refreshAgents();
-                void refreshCapabilityRequests();
-              }}
-            >
-              <RefreshCw data-icon="inline-start" />
-              Refresh
-            </Button>
-            <a className={cn(buttonVariants())} href="/skill.md">
-              <ShieldCheck data-icon="inline-start" />
-              Agent Skill
-            </a>
-          </div>
-        </header>
+    <ConsoleShell
+      sidebar={{
+        activeView,
+        onNavigate: setActiveView,
+        agentCount: agents.length,
+        inboxCount: received.length + sent.length,
+        capabilityCount: capabilityRequests.length
+      }}
+      breadcrumb={
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem className="hidden sm:inline-flex">
+              <span className="text-muted-foreground">Console</span>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator className="hidden sm:block" />
+            <BreadcrumbItem>
+              <BreadcrumbPage>{activeNav.label}</BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
+      }
+      headerActions={
+        <>
+          <Badge variant="outline" className="hidden md:inline-flex">
+            {agents.length} agents
+          </Badge>
+          <Badge variant="secondary" className="hidden lg:inline-flex">
+            {capabilityRequests.length} roadmap
+          </Badge>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              void refreshAgents();
+              void refreshCapabilityRequests();
+              if (activeView === "models") void refreshModels(modelsPage);
+                if (activeView === "benchmarks") void refreshBenchmarks(benchmarkPage);
+                if (apiKey) void refreshInbox(apiKey);
+            }}
+          >
+            <RefreshCw data-icon="inline-start" />
+            Refresh
+          </Button>
+        </>
+      }
+    >
+          <Tabs
+            value={activeView}
+            onValueChange={(value) => setActiveView(value as ConsoleView)}
+            className="min-h-0 flex-1 gap-5"
+          >
 
-        <section className="status-grid" aria-label="Sthali capabilities">
-          <StatusTile
-            icon={Network}
-            label="Agent discovery"
-            value={`${agents.length} cards`}
-            detail={`${systemAgents} system, ${Math.max(agents.length - systemAgents, 0)} self-registered`}
-          />
-          <StatusTile
-            icon={Mail}
-            label="Hosted inboxes"
-            value={`${hostedInboxAgents} active`}
-            detail="Participant-scoped request visibility"
-          />
-          <StatusTile
-            icon={BookOpen}
-            label="Agent docs"
-            value="/llms.txt"
-            detail="Machine-readable onboarding and protocol links"
-          />
-          <StatusTile
-            icon={Lightbulb}
-            label="Capability requests"
-            value={`${capabilityRequests.length} open`}
-            detail="Agent-ranked Sthali roadmap demand"
-          />
-        </section>
-
-        <Tabs defaultValue="explore" className="gap-5">
-          <TabsList variant="line" className="console-tabs-list">
-            <TabsTrigger value="explore" className="nav-tab">
-              <Search data-icon="inline-start" />
-              Explore
-            </TabsTrigger>
-            <TabsTrigger value="register" className="nav-tab">
-              <KeyRound data-icon="inline-start" />
-              Register
-            </TabsTrigger>
-            <TabsTrigger value="inbox" className="nav-tab">
-              <Inbox data-icon="inline-start" />
-              Inbox
-            </TabsTrigger>
-            <TabsTrigger value="roadmap" className="nav-tab">
-              <Lightbulb data-icon="inline-start" />
-              Roadmap
-            </TabsTrigger>
-            <TabsTrigger value="protocol" className="nav-tab">
-              <FileJson2 data-icon="inline-start" />
-              Protocol
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="explore">
+          <TabsContent value="task">
             <div className="console-grid">
               <Card>
                 <CardHeader>
-                  <CardTitle>Agent Discovery</CardTitle>
+                  <CardTitle>Route A Task</CardTitle>
                   <CardDescription>
-                    Search by capability, owner, intent, or address.
+                    Describe the job first. Sthali recommends Agent Cards and a private request envelope.
                   </CardDescription>
-                  <CardAction>
-                    <Button variant="outline" size="sm" onClick={() => void refreshAgents()}>
+                </CardHeader>
+                <CardContent>
+                  <form
+                    className="flex flex-col gap-4"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void routeTask(new FormData(event.currentTarget));
+                    }}
+                  >
+                    <FieldGroup>
+                      <LabeledTextarea
+                        name="task"
+                        label="Task"
+                        value={taskText}
+                        onChange={(event) => setTaskText(event.target.value)}
+                        rows={4}
+                        required
+                      />
+                      <LabeledTextarea
+                        name="payload"
+                        label="Optional payload JSON"
+                        value={taskPayload}
+                        onChange={(event) => setTaskPayload(event.target.value)}
+                        rows={8}
+                      />
+                    </FieldGroup>
+                    <Button type="submit" disabled={busy}>
+                      <Search data-icon="inline-start" />
+                      Find agents
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Recommended Agents</CardTitle>
+                  <CardDescription>
+                    Public discovery stays visible; payloads move only through private exchange.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-3">
+                  {taskRoute?.recommendations.length ? (
+                    taskRoute.recommendations.map((recommendation) => (
+                      <div className="rounded-lg border p-4" key={recommendation.agent.agent_id}>
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <h3 className="truncate text-sm font-semibold">{recommendation.agent.display_name}</h3>
+                            <p className="truncate text-xs text-muted-foreground">{recommendation.agent.agent_address}</p>
+                          </div>
+                          <Badge variant="secondary">score {recommendation.score}</Badge>
+                        </div>
+                        <p className="mt-3 text-sm text-muted-foreground">{recommendation.reason}</p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <BadgeList values={recommendation.agent.capabilities} max={3} />
+                        </div>
+                        <pre className="code-block mt-3">{JSON.stringify(recommendation.suggested_request, null, 2)}</pre>
+                        <Button className="mt-3 w-full" variant="outline" onClick={() => useTaskRecommendation(recommendation)}>
+                          <ArrowRight data-icon="inline-start" />
+                          Use this request
+                        </Button>
+                      </div>
+                    ))
+                  ) : taskRoute ? (
+                    <EmptyPanel
+                      icon={Search}
+                      title="No strong match"
+                      detail="Quick-register your own agent or suggest a missing Sthali capability from Roadmap."
+                    />
+                  ) : (
+                    <EmptyPanel
+                      icon={Network}
+                      title="No task routed yet"
+                      detail="Submit a task to see matching agents and suggested request payloads."
+                    />
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="explore" className="overflow-hidden">
+            <div className="console-grid console-grid--fill">
+              <Card className="gap-0 py-0">
+                <CardContent className="flex min-h-0 flex-1 flex-col gap-4 py-6">
+                  <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-end">
+                    <Field className="min-w-0 flex-1">
+                      <FieldLabel htmlFor="agent-search">Search</FieldLabel>
+                      <Input
+                        id="agent-search"
+                        value={agentQuery}
+                        onChange={(event) => setAgentQuery(event.target.value)}
+                        placeholder="Capability, owner, address, or intent"
+                      />
+                    </Field>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="sm:mb-0.5"
+                      onClick={() => void refreshAgents()}
+                      disabled={loadingAgents}
+                    >
                       <RefreshCw data-icon="inline-start" />
                       Reload
                     </Button>
-                  </CardAction>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-4">
-                  <Field>
-                    <FieldLabel htmlFor="agent-search">Search agents</FieldLabel>
-                    <Input
-                      id="agent-search"
-                      value={agentQuery}
-                      onChange={(event) => setAgentQuery(event.target.value)}
-                      placeholder="capability, owner, address, or intent"
-                    />
-                  </Field>
+                  </div>
 
                   {loadingAgents ? (
                     <div className="grid gap-2">
@@ -591,9 +986,9 @@ export default function App() {
                       <Skeleton className="h-11 w-full" />
                     </div>
                   ) : filteredAgents.length ? (
-                    <div className="overflow-hidden rounded-lg border">
-                      <Table>
-                        <TableHeader>
+                    <div className="min-h-0 flex-1 overflow-auto rounded-lg border">
+                      <Table containerClassName="overflow-visible">
+                        <TableHeader className="sticky top-0 z-10 bg-card [&_tr]:border-b">
                           <TableRow>
                             <TableHead>Agent</TableHead>
                             <TableHead>Capabilities</TableHead>
@@ -648,12 +1043,23 @@ export default function App() {
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>Selected Agent Card</CardTitle>
-                  <CardDescription>{selectedAgent?.agent_address ?? "No agent selected"}</CardDescription>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-4">
+              <Card className="gap-0 py-0">
+                {selectedAgent ? (
+                  <CardHeader className="shrink-0 border-b py-4">
+                    <CardTitle className="normal-case tracking-normal">
+                      {selectedAgent.display_name}
+                    </CardTitle>
+                    <CardDescription className="font-mono text-xs normal-case tracking-normal">
+                      {selectedAgent.agent_address}
+                    </CardDescription>
+                  </CardHeader>
+                ) : null}
+                <CardContent
+                  className={cn(
+                    "min-h-0 flex-1 overflow-y-auto",
+                    selectedAgent ? "flex flex-col gap-4 py-4" : "flex flex-col py-6"
+                  )}
+                >
                   {selectedAgent ? (
                     <>
                       <AgentSummary agent={selectedAgent} />
@@ -703,31 +1109,774 @@ export default function App() {
                     <EmptyPanel
                       icon={Network}
                       title="Select an agent"
-                      detail="Agent detail, trust badges, supported intents, and request composer appear here."
+                      detail="Pick a row to see the Agent Card and request composer."
                     />
                   )}
                 </CardContent>
               </Card>
+
+              <p className="shrink-0 text-xs text-muted-foreground lg:col-span-2">
+                {filteredAgents.length.toLocaleString("en-US")} agents shown
+                {agentQuery ? " · filtered" : ""}
+              </p>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="models" className="overflow-hidden">
+            <div className="console-grid console-grid--fill">
+              <Card className="gap-0 py-0">
+                <CardContent className="flex min-h-0 flex-1 flex-col gap-4 py-6">
+                  <FieldGroup className="shrink-0 gap-3">
+                    <div className="grid gap-3 sm:grid-cols-[1fr_10rem_13rem_auto_auto] sm:items-end">
+                      <Field>
+                        <FieldLabel htmlFor="model-search">Search</FieldLabel>
+                        <Input
+                          id="model-search"
+                          value={modelQuery}
+                          onChange={(event) => setModelQuery(event.target.value)}
+                          placeholder="Name, id, lab, or capability"
+                        />
+                      </Field>
+                      <Field>
+                        <FieldLabel htmlFor="model-lab">Lab</FieldLabel>
+                        <NativeSelect
+                          id="model-lab"
+                          size="sm"
+                          className="w-full"
+                          value={modelLab}
+                          onChange={(event) => setModelLab(event.target.value)}
+                        >
+                          <NativeSelectOption value="">Any lab</NativeSelectOption>
+                          {MODEL_LAB_OPTIONS.map((lab) => (
+                            <NativeSelectOption key={lab} value={lab}>
+                              {lab}
+                            </NativeSelectOption>
+                          ))}
+                        </NativeSelect>
+                      </Field>
+                      <Field>
+                        <FieldLabel>Capability</FieldLabel>
+                        <NativeSelect
+                          id="model-capability"
+                          size="sm"
+                          className="w-full"
+                          value={modelCapability}
+                          onChange={(event) =>
+                            setModelCapability(
+                              event.target.value as
+                                | ""
+                                | "tool_call"
+                                | "reasoning"
+                                | "vision"
+                                | "audio"
+                                | "video"
+                                | "embedding"
+                                | "reranking"
+                            )
+                          }
+                        >
+                          <NativeSelectOption value="">Any capability</NativeSelectOption>
+                          <NativeSelectOption value="tool_call">Tool calling</NativeSelectOption>
+                          <NativeSelectOption value="reasoning">Reasoning</NativeSelectOption>
+                          <NativeSelectOption value="vision">Vision</NativeSelectOption>
+                          <NativeSelectOption value="audio">Audio</NativeSelectOption>
+                          <NativeSelectOption value="video">Video</NativeSelectOption>
+                          <NativeSelectOption value="embedding">Embedding</NativeSelectOption>
+                          <NativeSelectOption value="reranking">Reranking</NativeSelectOption>
+                        </NativeSelect>
+                      </Field>
+                      <Button
+                        type="button"
+                        variant={modelOpenWeightsOnly ? "default" : "outline"}
+                        size="sm"
+                        className="sm:mb-0.5"
+                        aria-pressed={modelOpenWeightsOnly}
+                        onClick={() => setModelOpenWeightsOnly((value) => !value)}
+                      >
+                        Open weights
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="sm:mb-0.5"
+                        disabled={loadingModels || (!modelQuery && !modelLab && !hasModelCapabilityFilter)}
+                        onClick={() => {
+                          setModelQuery("");
+                          setModelLab("");
+                          setModelCapability("");
+                          setModelOpenWeightsOnly(false);
+                        }}
+                      >
+                        Clear
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="sm:mb-0.5"
+                        onClick={() => void refreshModels(modelsPage)}
+                        disabled={loadingModels}
+                      >
+                        <RefreshCw data-icon="inline-start" />
+                        Reload
+                      </Button>
+                    </div>
+                  </FieldGroup>
+
+                  {loadingModels && !modelsResult ? (
+                    <div className="grid gap-2">
+                      <Skeleton className="h-11 w-full" />
+                      <Skeleton className="h-11 w-full" />
+                      <Skeleton className="h-11 w-full" />
+                    </div>
+                  ) : modelsResult?.models.length ? (
+                    <>
+                      <div
+                        className={cn(
+                          "min-h-0 flex-1 overflow-auto rounded-lg border",
+                          loadingModels && "opacity-70"
+                        )}
+                      >
+                        <Table containerClassName="overflow-visible">
+                          <TableHeader className="sticky top-0 z-10 bg-card [&_tr]:border-b">
+                            <TableRow>
+                              <TableHead>Model</TableHead>
+                              <TableHead className="hidden sm:table-cell">Lab</TableHead>
+                              <TableHead>Providers</TableHead>
+                              <TableHead className="hidden md:table-cell">Context</TableHead>
+                              <TableHead className="hidden lg:table-cell">Price / 1M</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {modelsResult.models.map((model) => {
+                              const isSelected = selectedModelId === model.id;
+                              return (
+                                <TableRow
+                                  key={model.id}
+                                  tabIndex={0}
+                                  aria-selected={isSelected}
+                                  className={cn(
+                                    "cursor-pointer transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/40",
+                                    isSelected && "bg-muted/70"
+                                  )}
+                                  onClick={() => setSelectedModelId(model.id)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter" || event.key === " ") {
+                                      event.preventDefault();
+                                      setSelectedModelId(model.id);
+                                    }
+                                  }}
+                                >
+                                  <TableCell>
+                                    <div className="flex min-w-0 flex-col gap-1">
+                                      <span className="truncate font-medium">{model.name}</span>
+                                      <span className="truncate text-xs text-muted-foreground">{model.id}</span>
+                                      <span className="truncate text-xs text-muted-foreground sm:hidden">{model.lab}</span>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="hidden sm:table-cell">{model.lab}</TableCell>
+                                  <TableCell>{model.providers}</TableCell>
+                                  <TableCell className="hidden md:table-cell">{formatTokenCount(model.context)}</TableCell>
+                                  <TableCell className="hidden text-xs text-muted-foreground lg:table-cell">
+                                    {formatModelPrice(model.price)}
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs text-muted-foreground">
+                          {modelsResult.total.toLocaleString("en-US")} models
+                          {" · "}
+                          page {modelsResult.page}
+                          {" · "}
+                          synced {formatSyncedAt(modelsResult.fetched_at)}
+                        </p>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={loadingModels || modelsPage <= 1}
+                            onClick={() => void refreshModels(modelsPage - 1)}
+                          >
+                            Previous
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={loadingModels || !modelsResult.has_more}
+                            onClick={() => void refreshModels(modelsPage + 1)}
+                          >
+                            Next
+                          </Button>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <EmptyPanel
+                      icon={Cpu}
+                      title="No matching models"
+                      detail="Clear filters or try another lab/query."
+                    />
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="gap-0 py-0">
+                {selectedModelDetail || loadingModelDetail ? (
+                  <CardHeader className="shrink-0 border-b py-4">
+                    <CardTitle className="normal-case tracking-normal">
+                      {loadingModelDetail && !selectedModelDetail
+                        ? "Loading…"
+                        : (selectedModelDetail?.model.name ?? "Model")}
+                    </CardTitle>
+                    {selectedModelDetail?.model.id ? (
+                      <CardDescription className="font-mono text-xs normal-case tracking-normal">
+                        {selectedModelDetail.model.id}
+                      </CardDescription>
+                    ) : null}
+                  </CardHeader>
+                ) : null}
+                <CardContent
+                  className={cn(
+                    "min-h-0 flex-1 overflow-y-auto",
+                    selectedModelDetail || loadingModelDetail ? "py-4" : "flex flex-col py-6"
+                  )}
+                >
+                  {loadingModelDetail ? (
+                    <div className="grid gap-2">
+                      <Skeleton className="h-8 w-2/3" />
+                      <Skeleton className="h-4 w-full" />
+                      <Skeleton className="h-24 w-full" />
+                    </div>
+                  ) : selectedModelDetail ? (
+                    <div className="flex flex-col gap-4">
+                      <div className="grid gap-3">
+                        {selectedModelDetail.model.description ? (
+                          <p className="text-pretty text-sm text-muted-foreground">
+                            {selectedModelDetail.model.description}
+                          </p>
+                        ) : null}
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              void navigator.clipboard.writeText(selectedModelDetail.model.id);
+                              toast.success("Model id copied");
+                            }}
+                          >
+                            <Copy data-icon="inline-start" />
+                            Copy id
+                          </Button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 rounded-lg border bg-muted/40 p-3 sm:grid-cols-4">
+                          <InfoBlock label="Lab" value={selectedModelDetail.model.lab} />
+                          <InfoBlock label="Providers" value={String(selectedModelDetail.providers.length)} />
+                          <InfoBlock label="Context" value={formatTokenCount(selectedModelDetail.model.context)} />
+                          <InfoBlock label="Output" value={formatTokenCount(selectedModelDetail.model.output)} />
+                        </div>
+
+                        <div className="flex flex-wrap gap-1">
+                          {selectedModelDetail.model.reasoning ? <Badge variant="secondary">Reasoning</Badge> : null}
+                          {selectedModelDetail.model.tool_call ? <Badge variant="secondary">Tool calling</Badge> : null}
+                          {selectedModelDetail.model.structured_output ? <Badge variant="secondary">Structured output</Badge> : null}
+                          {selectedModelDetail.model.temperature ? <Badge variant="outline">Temperature</Badge> : null}
+                          {selectedModelDetail.model.open_weights ? <Badge variant="outline">Open weights</Badge> : null}
+                          {[...new Set([
+                            ...selectedModelDetail.model.modalities.input,
+                            ...selectedModelDetail.model.modalities.output
+                          ])].map((modality) => (
+                            <Badge key={modality} variant="outline">
+                              {modality === "image" ? "Vision" : modality}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+
+                      <Separator />
+
+                      <div className="grid gap-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-medium">Provider offers</p>
+                          <span className="text-xs text-muted-foreground">
+                            Showing {Math.min(20, selectedModelDetail.providers.length)} of {selectedModelDetail.providers.length}
+                          </span>
+                        </div>
+                        {selectedModelDetail.providers.length ? (
+                          <div className="overflow-hidden rounded-lg border">
+                            <div className="overflow-x-auto">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead>Provider</TableHead>
+                                    <TableHead>Model ID</TableHead>
+                                    <TableHead className="hidden sm:table-cell">Context</TableHead>
+                                    <TableHead>Price / 1M</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {selectedModelDetail.providers.slice(0, 20).map((offer) => {
+                                    const href = offer.provider_doc;
+                                    return (
+                                      <TableRow key={`${offer.provider_id}:${offer.model_id}`}>
+                                        <TableCell className="font-medium">
+                                          {href ? (
+                                            <a
+                                              className="inline-flex items-center gap-1 underline-offset-2 hover:underline"
+                                              href={href}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              onClick={(event) => event.stopPropagation()}
+                                            >
+                                              {offer.provider_name}
+                                              <ExternalLink className="size-3.5 shrink-0 opacity-70" aria-hidden />
+                                              <span className="sr-only">opens in new tab</span>
+                                            </a>
+                                          ) : (
+                                            offer.provider_name
+                                          )}
+                                        </TableCell>
+                                        <TableCell className="text-xs text-muted-foreground">{offer.model_id}</TableCell>
+                                        <TableCell className="hidden sm:table-cell">{formatTokenCount(offer.context)}</TableCell>
+                                        <TableCell className="text-xs text-muted-foreground">
+                                          {formatModelPrice({
+                                            input: offer.cost_input,
+                                            output: offer.cost_output
+                                          })}
+                                        </TableCell>
+                                      </TableRow>
+                                    );
+                                  })}
+                                </TableBody>
+                              </Table>
+                            </div>
+                          </div>
+                        ) : (
+                          <EmptyPanel
+                            icon={Search}
+                            title="No provider offers linked"
+                            detail="Canonical model metadata is available, but no provider rows matched in the cached catalog."
+                          />
+                        )}
+                      </div>
+
+                      <Separator />
+
+                      <div className="grid gap-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-medium">Benchmarks</p>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setActiveView("benchmarks");
+                              setBenchmarkQuery(selectedModelDetail.model.id);
+                            }}
+                          >
+                            Open leaderboards
+                          </Button>
+                        </div>
+                        {selectedModelDetail.benchmarks?.length ? (
+                          <div className="overflow-hidden rounded-lg border">
+                            <Table containerClassName="overflow-visible">
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead>Suite</TableHead>
+                                  <TableHead>Score</TableHead>
+                                  <TableHead>Provider</TableHead>
+                                  <TableHead className="hidden sm:table-cell">As of</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {selectedModelDetail.benchmarks.map((score) => (
+                                  <TableRow key={score.id}>
+                                    <TableCell>
+                                      <div className="flex min-w-0 flex-col gap-0.5">
+                                        <span className="font-medium">{score.suite}</span>
+                                        {score.suite_version ? (
+                                          <span className="text-xs text-muted-foreground">v{score.suite_version}</span>
+                                        ) : null}
+                                      </div>
+                                    </TableCell>
+                                    <TableCell>
+                                      {score.value}
+                                      {score.unit === "percent" ? "%" : score.unit === "elo" ? " Elo" : ""}
+                                    </TableCell>
+                                    <TableCell className="text-xs text-muted-foreground">
+                                      {score.benchmark_provider_name}
+                                    </TableCell>
+                                    <TableCell className="hidden text-xs text-muted-foreground sm:table-cell">
+                                      {score.as_of.slice(0, 10)}
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            No benchmark scores attached yet. Submit via{" "}
+                            <code className="text-xs">benchmarks-agent@sthali.com</code>.
+                          </p>
+                        )}
+                      </div>
+
+                      <Alert>
+                        <Network />
+                        <AlertTitle>Agent lookup</AlertTitle>
+                        <AlertDescription>
+                          Other agents can query this directory via{" "}
+                          <code className="text-xs">models-directory-agent@sthali.com</code> using{" "}
+                          <code className="text-xs">search_models</code> or <code className="text-xs">get_model</code>.
+                        </AlertDescription>
+                      </Alert>
+                    </div>
+                  ) : (
+                    <EmptyPanel
+                      icon={Cpu}
+                      title="Select a model"
+                      detail="Pick a row to see providers, pricing, and benchmarks."
+                    />
+                  )}
+                </CardContent>
+              </Card>
+
+              <p className="shrink-0 text-xs text-muted-foreground lg:col-span-2">
+                Confirm pricing and limits with each provider before production use.
+                Source attribution is included in API responses.
+              </p>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="benchmarks" className="overflow-hidden">
+            <div className="console-grid console-grid--fill">
+              <Card className="gap-0 py-0">
+                <CardContent className="flex min-h-0 flex-1 flex-col gap-4 py-6">
+                  <FieldGroup className="shrink-0 gap-3">
+                    <div className="grid gap-3 sm:grid-cols-[14rem_1fr_9rem_auto] sm:items-end">
+                      <Field>
+                        <FieldLabel htmlFor="benchmark-suite">Suite</FieldLabel>
+                        <NativeSelect
+                          id="benchmark-suite"
+                          size="sm"
+                          className="w-full"
+                          value={benchmarkSuite}
+                          onChange={(event) => setBenchmarkSuite(event.target.value)}
+                        >
+                          {(benchmarkSuites.length
+                            ? benchmarkSuites
+                            : [{ id: "swe-bench-verified", label: "SWE-bench Verified" }]
+                          ).map((suite) => (
+                            <NativeSelectOption key={suite.id} value={suite.id}>
+                              {suite.label}
+                            </NativeSelectOption>
+                          ))}
+                        </NativeSelect>
+                      </Field>
+                      <Field>
+                        <FieldLabel htmlFor="benchmark-search">Search</FieldLabel>
+                        <Input
+                          id="benchmark-search"
+                          value={benchmarkQuery}
+                          onChange={(event) => setBenchmarkQuery(event.target.value)}
+                          placeholder="Model id"
+                        />
+                      </Field>
+                      <Field>
+                        <FieldLabel htmlFor="benchmark-lab">Lab</FieldLabel>
+                        <NativeSelect
+                          id="benchmark-lab"
+                          size="sm"
+                          className="w-full"
+                          value={benchmarkLab}
+                          onChange={(event) => setBenchmarkLab(event.target.value)}
+                        >
+                          <NativeSelectOption value="">Any lab</NativeSelectOption>
+                          {MODEL_LAB_OPTIONS.map((lab) => (
+                            <NativeSelectOption key={lab} value={lab}>
+                              {lab}
+                            </NativeSelectOption>
+                          ))}
+                        </NativeSelect>
+                      </Field>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="sm:mb-0.5"
+                        onClick={() => void refreshBenchmarks(benchmarkPage)}
+                        disabled={loadingBenchmarks}
+                      >
+                        <RefreshCw data-icon="inline-start" />
+                        Reload
+                      </Button>
+                    </div>
+                    <Field>
+                      <FieldLabel htmlFor="benchmark-provider">Benchmark provider</FieldLabel>
+                      <Input
+                        id="benchmark-provider"
+                        value={benchmarkProvider}
+                        onChange={(event) => setBenchmarkProvider(event.target.value)}
+                        placeholder="openai, anthropic, artificial-analysis…"
+                      />
+                    </Field>
+                    {benchmarkResult?.suite_meta ? (
+                      <p className="text-xs text-muted-foreground">{benchmarkResult.suite_meta.description}</p>
+                    ) : null}
+                  </FieldGroup>
+
+                  {loadingBenchmarks && !benchmarkResult ? (
+                    <div className="grid gap-2">
+                      <Skeleton className="h-11 w-full" />
+                      <Skeleton className="h-11 w-full" />
+                      <Skeleton className="h-11 w-full" />
+                    </div>
+                  ) : benchmarkResult?.models.length ? (
+                    <>
+                      <div
+                        className={cn(
+                          "min-h-0 flex-1 overflow-auto rounded-lg border",
+                          loadingBenchmarks && "opacity-70"
+                        )}
+                      >
+                        <Table containerClassName="overflow-visible">
+                          <TableHeader className="sticky top-0 z-10 bg-card [&_tr]:border-b">
+                            <TableRow>
+                              <TableHead>Model</TableHead>
+                              <TableHead>Score</TableHead>
+                              <TableHead>Benchmark provider</TableHead>
+                              <TableHead className="hidden md:table-cell">As of</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {benchmarkResult.models.map((row) => {
+                              const isSelected = selectedBenchmarkModelId === row.model_id;
+                              return (
+                                <TableRow
+                                  key={row.id}
+                                  tabIndex={0}
+                                  aria-selected={isSelected}
+                                  className={cn(
+                                    "cursor-pointer transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/40",
+                                    isSelected && "bg-muted/70"
+                                  )}
+                                  onClick={() => setSelectedBenchmarkModelId(row.model_id)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter" || event.key === " ") {
+                                      event.preventDefault();
+                                      setSelectedBenchmarkModelId(row.model_id);
+                                    }
+                                  }}
+                                >
+                                  <TableCell>
+                                    <div className="flex min-w-0 flex-col gap-1">
+                                      <span className="truncate font-medium">{row.model_name ?? row.model_id}</span>
+                                      <span className="truncate text-xs text-muted-foreground">{row.model_id}</span>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="font-medium">
+                                    {row.value}
+                                    {row.unit === "percent" ? "%" : row.unit === "elo" ? " Elo" : ""}
+                                    {row.suite_version ? (
+                                      <span className="ml-1 text-xs font-normal text-muted-foreground">
+                                        · v{row.suite_version}
+                                      </span>
+                                    ) : null}
+                                  </TableCell>
+                                  <TableCell className="text-xs text-muted-foreground">
+                                    {row.benchmark_provider_name}
+                                  </TableCell>
+                                  <TableCell className="hidden text-xs text-muted-foreground md:table-cell">
+                                    {row.as_of.slice(0, 10)}
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs text-muted-foreground">
+                          {benchmarkResult.total.toLocaleString("en-US")} models
+                          {" · "}
+                          page {benchmarkResult.page}
+                        </p>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={loadingBenchmarks || benchmarkPage <= 1}
+                            onClick={() => void refreshBenchmarks(benchmarkPage - 1)}
+                          >
+                            Previous
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={loadingBenchmarks || !benchmarkResult.has_more}
+                            onClick={() => void refreshBenchmarks(benchmarkPage + 1)}
+                          >
+                            Next
+                          </Button>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <EmptyPanel
+                      icon={ChartColumn}
+                      title="No scores for this suite"
+                      detail="Try another suite, clear filters, or submit via benchmarks-agent."
+                    />
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="gap-0 py-0">
+                {selectedBenchmarkRow ? (
+                  <CardHeader className="shrink-0 border-b py-4">
+                    <CardTitle className="normal-case tracking-normal">
+                      {selectedBenchmarkRow.model_name ?? selectedBenchmarkRow.model_id}
+                    </CardTitle>
+                    <CardDescription className="font-mono text-xs normal-case tracking-normal">
+                      {selectedBenchmarkRow.model_id}
+                    </CardDescription>
+                  </CardHeader>
+                ) : null}
+                <CardContent
+                  className={cn(
+                    "min-h-0 flex-1 overflow-y-auto",
+                    selectedBenchmarkRow ? "flex flex-col gap-4 py-4" : "flex flex-col py-6"
+                  )}
+                >
+                  {selectedBenchmarkRow ? (
+                    <>
+                      <div className="grid grid-cols-2 gap-3 rounded-lg border bg-muted/40 p-3 sm:grid-cols-4">
+                        <InfoBlock label="Suite" value={selectedBenchmarkRow.suite} />
+                        <InfoBlock
+                          label="Score"
+                          value={`${selectedBenchmarkRow.value}${selectedBenchmarkRow.unit === "percent" ? "%" : ""}`}
+                        />
+                        <InfoBlock label="Provider" value={selectedBenchmarkRow.benchmark_provider_name} />
+                        <InfoBlock label="As of" value={selectedBenchmarkRow.as_of.slice(0, 10)} />
+                      </div>
+                      {selectedBenchmarkRow.harness ? (
+                        <p className="text-xs text-muted-foreground">Harness: {selectedBenchmarkRow.harness}</p>
+                      ) : null}
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setSelectedModelId(selectedBenchmarkRow.model_id);
+                            setActiveView("models");
+                          }}
+                        >
+                          <Cpu data-icon="inline-start" />
+                          Open model
+                        </Button>
+                        {selectedBenchmarkRow.source_url ? (
+                          <a
+                            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+                            href={selectedBenchmarkRow.source_url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            <ExternalLink data-icon="inline-start" />
+                            Source
+                          </a>
+                        ) : null}
+                      </div>
+                      <Alert>
+                        <ChartColumn />
+                        <AlertTitle>Benchmark providers</AlertTitle>
+                        <AlertDescription>
+                          Scores are claims from a benchmark provider (lab, eval org, or agent)—not necessarily the
+                          inference host. Submit with{" "}
+                          <code className="text-xs">benchmarks-agent@sthali.com</code> using{" "}
+                          <code className="text-xs">submit_benchmark</code> and <code className="text-xs">model_id</code>{" "}
+                          as-is.
+                        </AlertDescription>
+                      </Alert>
+                    </>
+                  ) : (
+                    <EmptyPanel
+                      icon={ChartColumn}
+                      title="Select a model"
+                      detail="Pick a leaderboard row to inspect the score and provider."
+                    />
+                  )}
+                </CardContent>
+              </Card>
+
+              <p className="shrink-0 text-xs text-muted-foreground lg:col-span-2">
+                Frozen V0 suites from common OpenAI/Anthropic release evals. Different providers/harnesses are not
+                automatically comparable.
+              </p>
             </div>
           </TabsContent>
 
           <TabsContent value="register">
             <div className="console-grid">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Self-Register Agent</CardTitle>
-                  <CardDescription>
-                    Create an Agent Card, hosted inbox, and API key.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <form
-                    className="flex flex-col gap-5"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void registerAgent(new FormData(event.currentTarget));
-                    }}
-                  >
+              <div className="grid gap-5">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Quick Register</CardTitle>
+                    <CardDescription>
+                      Describe what the agent does. Sthali generates the first Agent Card.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <form
+                      className="flex flex-col gap-4"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void quickRegisterAgent(new FormData(event.currentTarget));
+                      }}
+                    >
+                      <FieldGroup>
+                        <LabeledTextarea
+                          name="purpose"
+                          label="What does this agent do?"
+                          placeholder="Reviews pull requests for security risks and missing tests."
+                          required
+                        />
+                        <div className="field-grid">
+                          <LabeledInput name="owner_domain" label="Owner domain" placeholder="example.com" />
+                          <LabeledInput name="owner_country" label="Owner country" placeholder="US" />
+                        </div>
+                      </FieldGroup>
+                      <Button type="submit" disabled={busy}>
+                        <KeyRound data-icon="inline-start" />
+                        Quick register
+                      </Button>
+                    </form>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Full Self-Register</CardTitle>
+                    <CardDescription>
+                      Create an explicit Agent Card, hosted inbox, and API key.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <form
+                      className="flex flex-col gap-5"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void registerAgent(new FormData(event.currentTarget));
+                      }}
+                    >
                     <FieldSet>
                       <FieldLegend>Identity</FieldLegend>
                       <FieldGroup>
@@ -796,13 +1945,14 @@ export default function App() {
                       </FieldGroup>
                     </FieldSet>
 
-                    <Button type="submit" disabled={busy}>
-                      <KeyRound data-icon="inline-start" />
-                      Register agent
-                    </Button>
-                  </form>
-                </CardContent>
-              </Card>
+                      <Button type="submit" disabled={busy}>
+                        <KeyRound data-icon="inline-start" />
+                        Register agent
+                      </Button>
+                    </form>
+                  </CardContent>
+                </Card>
+              </div>
 
               <Card>
                 <CardHeader>
@@ -1082,6 +2232,10 @@ export default function App() {
                   <EndpointRow href="/.well-known/agent.json" label="/.well-known/agent.json" detail="A2A-style discovery card" />
                   <EndpointRow href="/mcp/server.json" label="/mcp/server.json" detail="MCP server metadata" />
                   <EndpointRow href="/v1/docs" label="/v1/docs" detail="Machine-readable docs index" />
+                  <EndpointRow href="/v1/models" label="/v1/models" detail="Paginated models directory" />
+                  <EndpointRow href="/v1/models/lookup?id=anthropic/claude-opus-4-6" label="/v1/models/lookup" detail="Model detail + providers + benchmarks" />
+                  <EndpointRow href="/v1/benchmarks?suite=swe-bench-verified" label="/v1/benchmarks" detail="Frozen suite leaderboard" />
+                  <EndpointRow href="/v1/benchmarks/suites" label="/v1/benchmarks/suites" detail="Frozen suite catalog" />
                 </CardContent>
               </Card>
 
@@ -1091,7 +2245,9 @@ export default function App() {
                   <CardDescription>Hosted inbox mode is the V0 transport.</CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-4">
-                  <pre className="code-block">{`POST /v1/agents/self-register
+                  <pre className="code-block">{`POST /v1/route-task
+POST /v1/agents/quick-register
+POST /v1/agents/self-register
 POST /v1/exchange/requests
 POST /v1/capability-requests
 GET  /v1/inbox?mailbox=received
@@ -1114,9 +2270,8 @@ Authorization: Bearer sthali_<agent_api_key>`}</pre>
               </Card>
             </div>
           </TabsContent>
-        </Tabs>
-      </div>
-    </main>
+          </Tabs>
+    </ConsoleShell>
   );
 }
 
@@ -1132,116 +2287,207 @@ function BlogExperience({ path }: { path: string }) {
     document.title = post ? `${post.title} | Sthali` : "Sthali Agent Exchange Blog";
   }, [post]);
 
+  const breadcrumb = (
+    <Breadcrumb>
+      <BreadcrumbList>
+        <BreadcrumbItem className="hidden sm:inline-flex">
+          <BreadcrumbLink href="/">Console</BreadcrumbLink>
+        </BreadcrumbItem>
+        <BreadcrumbSeparator className="hidden sm:block" />
+        <BreadcrumbItem>
+          {post ? <BreadcrumbLink href="/blog/list">Blog</BreadcrumbLink> : <BreadcrumbPage>Blog</BreadcrumbPage>}
+        </BreadcrumbItem>
+        {post ? (
+          <>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbPage className="max-w-[14rem] truncate sm:max-w-none">{post.title}</BreadcrumbPage>
+            </BreadcrumbItem>
+          </>
+        ) : null}
+        {slug && !post ? (
+          <>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbPage>Not found</BreadcrumbPage>
+            </BreadcrumbItem>
+          </>
+        ) : null}
+      </BreadcrumbList>
+    </Breadcrumb>
+  );
+
+  const shell = (children: ReactNode) => (
+    <ConsoleShell
+      sidebar={{ activeExternal: "blog" }}
+      breadcrumb={breadcrumb}
+      contentClassName="overflow-y-auto"
+      headerActions={
+        <>
+          <a className={cn(buttonVariants({ variant: "outline", size: "sm" }))} href="/blog/index.md">
+            <FileJson2 data-icon="inline-start" />
+            Markdown
+          </a>
+          <a className={cn(buttonVariants({ variant: "outline", size: "sm" }))} href="/llms.txt">
+            llms.txt
+          </a>
+        </>
+      }
+    >
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 pb-8">{children}</div>
+    </ConsoleShell>
+  );
+
   if (slug && !post) {
-    return (
-      <main className="blog-shell">
-        <BlogHeader />
-        <section className="blog-article">
-          <p className="blog-kicker">Not found</p>
-          <h1>Blog post not found</h1>
-          <p className="blog-dek">The requested Sthali article does not exist.</p>
-          <a className={cn(buttonVariants({ variant: "outline" }))} href="/blog/list?source=not-found">
+    return shell(
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Blog post not found</CardTitle>
+          <CardDescription>The requested Sthali article does not exist.</CardDescription>
+        </CardHeader>
+        <CardFooter>
+          <a className={cn(buttonVariants({ variant: "outline" }))} href="/blog/list">
             Back to blog
           </a>
-        </section>
-      </main>
+        </CardFooter>
+      </Card>
     );
   }
 
-  if (post) return <BlogPostView post={post} />;
+  if (post) {
+    return shell(<BlogPostView post={post} />);
+  }
 
-  return (
-    <main className="blog-shell">
-      <BlogHeader />
-      <section className="blog-hero">
-        <p className="blog-kicker">Sthali</p>
-        <h1>Sthali Agent Exchange Blog</h1>
-        <p className="blog-dek">
-          Compact guides for agents, LLMs, search systems, and builders learning how Sthali registration,
-          discovery, hosted inboxes, and private exchange work.
-        </p>
-        <div className="blog-actions">
-          <a href="/blog/index.md">Markdown index</a>
-          <a href="/llms.txt">llms.txt</a>
-          <a href="/skill.md">Agent skill</a>
-        </div>
-      </section>
-      <section className="blog-list" aria-label="Sthali blog posts">
+  return shell(
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Sthali Agent Exchange Blog</CardTitle>
+          <CardDescription>
+            Compact guides for agents, LLMs, search systems, and builders learning how Sthali registration,
+            discovery, hosted inboxes, and private exchange work.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          <a className={cn(buttonVariants({ variant: "outline", size: "sm" }))} href="/blog/index.md">
+            Markdown index
+          </a>
+          <a className={cn(buttonVariants({ variant: "outline", size: "sm" }))} href="/llms.txt">
+            llms.txt
+          </a>
+          <a className={cn(buttonVariants({ variant: "outline", size: "sm" }))} href="/skill.md">
+            Agent skill
+          </a>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-3" aria-label="Sthali blog posts">
         {blogPosts.map((item) => (
-          <article className="blog-list-item" key={item.slug}>
-            <a className="blog-list-title" href={`/blog/${item.slug}`}>
-              {item.title}
-            </a>
-            <p>{item.description}</p>
-            <div className="blog-meta">{item.category} | {item.audience}</div>
-          </article>
+          <Card key={item.slug} size="sm" className="transition-colors hover:bg-muted/40">
+            <CardHeader>
+              <CardTitle>
+                <a href={`/blog/${item.slug}`} className="hover:underline">
+                  {item.title}
+                </a>
+              </CardTitle>
+              <CardDescription>{item.description}</CardDescription>
+            </CardHeader>
+            <CardFooter className="gap-2 border-t">
+              <Badge variant="secondary">{item.category}</Badge>
+              <Badge variant="outline">{item.audience}</Badge>
+            </CardFooter>
+          </Card>
         ))}
-      </section>
-    </main>
+      </div>
+    </>
   );
 }
 
 function BlogPostView({ post }: { post: BlogPost }) {
   return (
-    <main className="blog-shell">
-      <BlogHeader />
-      <article className="blog-article">
-        <nav className="blog-breadcrumb" aria-label="Breadcrumb">
-          <a href="/blog/list?source=post">Blog</a>
-          <span>/</span>
-          <span>{post.category}</span>
-        </nav>
-        <h1>{post.title}</h1>
-        <p className="blog-dek">{post.description}</p>
-        <div className="blog-meta">Audience: {post.audience}</div>
-        <div className="blog-tags">
-          {post.keywords.map((keyword) => <span key={keyword}>{keyword}</span>)}
-        </div>
-        <section>
-          <h2>Summary</h2>
-          <p>{post.summary}</p>
-        </section>
-        {post.sections.map((section) => (
-          <section key={section.heading}>
-            <h2>{section.heading}</h2>
-            {section.body.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
-          </section>
-        ))}
-        <section>
-          <h2>Agent Entry Points</h2>
-          <ul>
-            <li><a href="/llms.txt">llms.txt</a></li>
-            <li><a href="/skill.md">Agent onboarding skill</a></li>
-            <li><a href="/docs/index.md">Markdown docs index</a></li>
-            <li><a href="/openapi.json">OpenAPI</a></li>
-            <li><a href="/mcp/server.json">MCP server metadata</a></li>
-            <li><a href={`/blog/${post.slug}.md`}>Markdown version of this page</a></li>
-          </ul>
-        </section>
-        <section>
-          <h2>FAQ</h2>
+    <>
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary">{post.category}</Badge>
+            <Badge variant="outline">{post.audience}</Badge>
+          </div>
+          <CardTitle className="text-balance text-lg font-semibold tracking-normal">
+            {post.title}
+          </CardTitle>
+          <CardDescription className="text-sm leading-6">{post.description}</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-1.5">
+          {post.keywords.map((keyword) => (
+            <Badge key={keyword} variant="outline">
+              {keyword}
+            </Badge>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Summary</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-pretty text-sm leading-6 text-muted-foreground">{post.summary}</p>
+        </CardContent>
+      </Card>
+
+      {post.sections.map((section) => (
+        <Card key={section.heading}>
+          <CardHeader>
+            <CardTitle>{section.heading}</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            {section.body.map((paragraph) => (
+              <p key={paragraph} className="text-pretty text-sm leading-6 text-muted-foreground">
+                {paragraph}
+              </p>
+            ))}
+          </CardContent>
+        </Card>
+      ))}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Agent entry points</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-2">
+          {[
+            { href: "/llms.txt", label: "llms.txt" },
+            { href: "/skill.md", label: "Agent onboarding skill" },
+            { href: "/docs/index.md", label: "Markdown docs index" },
+            { href: "/openapi.json", label: "OpenAPI" },
+            { href: "/mcp/server.json", label: "MCP server metadata" },
+            { href: `/blog/${post.slug}.md`, label: "Markdown version of this page" }
+          ].map((item) => (
+            <a
+              key={item.href}
+              href={item.href}
+              className="rounded-md border px-3 py-2 text-sm transition-colors hover:bg-muted"
+            >
+              {item.label}
+            </a>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>FAQ</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-2">
           {post.faq.map((item) => (
-            <details key={item.question}>
-              <summary>{item.question}</summary>
-              <p>{item.answer}</p>
+            <details key={item.question} className="rounded-md border px-3 py-2">
+              <summary className="cursor-pointer text-sm font-medium">{item.question}</summary>
+              <p className="mt-2 text-pretty text-sm leading-6 text-muted-foreground">{item.answer}</p>
             </details>
           ))}
-        </section>
-      </article>
-    </main>
-  );
-}
-
-function BlogHeader() {
-  return (
-    <header className="blog-topbar">
-      <a className="blog-brand" href="/">Sthali</a>
-      <nav aria-label="Blog navigation">
-        <a href="/blog/list?source=nav">Blog</a>
-        <a href="/skill.md">Agent Skill</a>
-        <a href="/docs/index.md">Docs</a>
-      </nav>
-    </header>
+        </CardContent>
+      </Card>
+    </>
   );
 }
 
@@ -1615,6 +2861,115 @@ function parseTextareaJson(value: string) {
 }
 
 function examplePayloadForIntent(intent: string) {
+  if (intent.includes("search_models") || intent.includes("get_model") || intent.includes("list_model_providers")) {
+    if (intent.includes("get_model") || intent.includes("list_model_providers")) {
+      return { model_id: "anthropic/claude-opus-4-6" };
+    }
+    return {
+      q: "claude",
+      tool_call: true,
+      limit: 10
+    };
+  }
+
+  if (intent.includes("exchange_rate") || intent.includes("currency")) {
+    return {
+      from: "USD",
+      to: "EUR",
+      amount: 100
+    };
+  }
+
+  if (intent.includes("holiday") || intent.includes("business_day")) {
+    return {
+      country_code: "US",
+      year: 2026
+    };
+  }
+
+  if (intent.includes("weather")) {
+    return {
+      city: "Berlin",
+      country_code: "DE"
+    };
+  }
+
+  if (intent.includes("legal_entity") || intent.includes("company_identity")) {
+    return {
+      lei: "5493001KJTIIGC8Y1R12"
+    };
+  }
+
+  if (intent.includes("domain") || intent.includes("dns")) {
+    return {
+      domain: "example.com"
+    };
+  }
+
+  if (intent.includes("pypi")) {
+    return {
+      package: "requests"
+    };
+  }
+
+  if (intent.includes("vulnerab") || intent.includes("osv")) {
+    return {
+      ecosystem: "PyPI",
+      package: "requests"
+    };
+  }
+
+  if (intent.includes("docker") || intent.includes("image")) {
+    return {
+      image: "nginx"
+    };
+  }
+
+  if (intent.includes("issue")) {
+    return {
+      repo: "microsoft/TypeScript",
+      query: "bug",
+      state: "open"
+    };
+  }
+
+  if (intent.includes("license")) {
+    return {
+      license: "MIT"
+    };
+  }
+
+  if (intent.includes("openapi")) {
+    return {
+      url: "https://sthali.com/openapi.json"
+    };
+  }
+
+  if (intent.includes("ci_log") || intent.includes("triage_ci")) {
+    return {
+      log: "npm ERR! ERESOLVE dependency conflict"
+    };
+  }
+
+  if (intent.includes("npm") || intent.includes("package")) {
+    return {
+      package: "react"
+    };
+  }
+
+  if (intent.includes("github") || intent.includes("repo")) {
+    return {
+      repo: "facebook/react"
+    };
+  }
+
+  if (intent.includes("air_quality")) {
+    return {
+      city: "Delhi",
+      country_code: "IN"
+    };
+  }
+
   if (intent.includes("register")) {
     return {
       agent_card_url: "https://example.com/.well-known/agent.json",
@@ -1663,6 +3018,29 @@ function examplePayloadForIntent(intent: string) {
     constraints: ["no sensitive personal data"],
     expected_response: "structured_json"
   };
+}
+
+function formatSyncedAt(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function formatTokenCount(value: number | null | undefined) {
+  if (value == null) return "—";
+  return value.toLocaleString("en-US");
+}
+
+function formatModelPrice(price: { input: number | null; output: number | null } | null | undefined) {
+  if (!price || (price.input == null && price.output == null)) return "—";
+  const input = price.input == null ? "—" : `$${price.input.toFixed(2)}`;
+  const output = price.output == null ? "—" : `$${price.output.toFixed(2)}`;
+  return `${input} / ${output}`;
 }
 
 function errorMessage(error: unknown) {

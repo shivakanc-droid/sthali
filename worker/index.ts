@@ -16,6 +16,14 @@ import {
   upsertBenchmarkScore,
   type BenchmarkSuiteId
 } from "./benchmark-catalog";
+import {
+  getUtilityAgentById,
+  getUtilityAgentBySlug,
+  isUtilityAgentId,
+  utilityAgentResponse,
+  utilityAgents,
+  type UtilityAgentDefinition
+} from "./utility-agent-catalog";
 
 type Bindings = {
   DB: D1Database;
@@ -339,6 +347,17 @@ app.get("/blog/:slug", (c) => {
   if (!post) return c.notFound();
   return wantsMarkdown ? markdown(c, blogPostMarkdown(c.env, post)) : html(c, blogPostHtml(c.env, post));
 });
+app.get("/agents", (c) => html(c, utilityAgentIndexHtml(c.env)));
+app.get("/agents/:slug", (c) => {
+  const rawSlug = c.req.param("slug") ?? "";
+  const wantsMarkdown = rawSlug.endsWith(".md");
+  const slug = wantsMarkdown ? rawSlug.slice(0, -3) : rawSlug;
+  const agent = getUtilityAgentBySlug(slug);
+  if (!agent) return c.notFound();
+  return wantsMarkdown
+    ? markdown(c, utilityAgentMarkdown(c.env, agent))
+    : html(c, utilityAgentHtml(c.env, agent));
+});
 app.get("/docs", (c) => markdown(c, docsIndexMarkdown(c.env)));
 app.get("/docs/index.md", (c) => markdown(c, docsIndexMarkdown(c.env)));
 app.get("/docs/agents.md", (c) => markdown(c, agentDocsMarkdown(c.env)));
@@ -507,7 +526,7 @@ app.get("/v1/agents", async (c) => {
     `SELECT * FROM agents
      WHERE status IN ('self_registered', 'listed')
      ORDER BY created_at DESC
-     LIMIT 100`
+     LIMIT 500`
   ).all<AgentRow>();
   let agents = rows.results.map(toPublicAgent);
   if (q) {
@@ -1218,7 +1237,7 @@ async function routeTask(
     `SELECT * FROM agents
      WHERE status IN ('self_registered', 'listed')
      ORDER BY created_at DESC
-     LIMIT 100`
+     LIMIT 500`
   ).all<AgentRow>();
   const useCaseMatches = matchTaskUseCases(task, payload);
   const recommendations = rows.results
@@ -1396,6 +1415,22 @@ const taskUseCases: TaskUseCase[] = [
     payload: { suite: "swe-bench-verified", page: 1, page_size: 10 },
     reason: "Best fit for frozen model benchmark leaderboards and score lookup.",
     score: 12
+  },
+  {
+    agent_address: "word-counter-agent@sthali.com",
+    keywords: ["word count", "count words", "character count", "reading time", "speaking time", "text length"],
+    intent: "count_words",
+    payload: { text: "Paste text to count here." },
+    reason: "Best fit for deterministic word counts and related text metrics.",
+    score: 12
+  },
+  {
+    agent_address: "number-to-words-agent@sthali.com",
+    keywords: ["number to words", "amount in words", "currency in words", "spell number", "write number"],
+    intent: "convert_number_to_words",
+    payload: { value: "1234.56", currency: "USD" },
+    reason: "Best fit for deterministic English number and currency wording.",
+    score: 12
   }
 ];
 
@@ -1422,9 +1457,21 @@ async function maybeAutoRespondManagedAgent(
   request: ExchangeRequestRow,
   toAgent: AgentRow
 ) {
-  if (!isManagedPublicApiAgentId(toAgent.id)) return request;
+  const utilityAgent = getUtilityAgentById(toAgent.id);
+  const managedPublicApiAgent = isManagedPublicApiAgentId(toAgent.id)
+    ? managedPublicApiAgents[toAgent.id]
+    : null;
+  if (!managedPublicApiAgent && !utilityAgent) return request;
 
-  const responsePayload = await managedPublicApiResponse(toAgent.id, request.intent, parseJsonText(request.payload_json, {}), c.env);
+  const payload = parseJsonText<Record<string, unknown>>(request.payload_json, {});
+  let responsePayload: Record<string, unknown>;
+  if (utilityAgent && isUtilityAgentId(toAgent.id)) {
+    responsePayload = utilityAgentResponse(toAgent.id, request.intent, payload);
+  } else if (isManagedPublicApiAgentId(toAgent.id)) {
+    responsePayload = await managedPublicApiResponse(toAgent.id, request.intent, payload, c.env);
+  } else {
+    return request;
+  }
   const now = new Date().toISOString();
   const messageId = createId("msg");
   const responseJson = JSON.stringify(responsePayload);
@@ -1449,7 +1496,7 @@ async function maybeAutoRespondManagedAgent(
       eventType: responsePayload.ok === false ? "exchange.auto_response_failed" : "exchange.auto_responded",
       metadata: {
         managed_agent_id: toAgent.id,
-        source: managedPublicApiAgents[toAgent.id].source,
+        source: utilityAgent?.source ?? managedPublicApiAgent?.source ?? "Sthali managed agent",
         message_id: messageId
       },
       now
@@ -4104,6 +4151,123 @@ function blogPostHtml(env: Bindings, post: BlogPost) {
   });
 }
 
+function utilityAgentIndexHtml(env: Bindings) {
+  const cards = utilityAgents.map((agent) => `<article>
+    <a class="post-title" href="/agents/${escapeXml(agent.slug)}">${escapeXml(agent.displayName)}</a>
+    <p>${escapeXml(agent.purpose)}</p>
+    <div class="meta">${escapeXml(agent.category)} | ${escapeXml(agent.intent)}</div>
+  </article>`).join("\n");
+
+  return pageHtml({
+    title: "Executable Utility Agents | Sthali",
+    description: "Individually discoverable Sthali agents that execute one deterministic utility capability through private structured requests.",
+    canonicalUrl: siteUrl(env, "/agents"),
+    jsonLd: {
+      "@context": "https://schema.org",
+      "@graph": [
+        organizationSchema(env),
+        websiteSchema(env),
+        {
+          "@type": "ItemList",
+          name: "Sthali Executable Utility Agents",
+          itemListElement: utilityAgents.map((agent, index) => ({
+            "@type": "ListItem",
+            position: index + 1,
+            name: agent.displayName,
+            url: siteUrl(env, `/agents/${agent.slug}`)
+          }))
+        }
+      ]
+    },
+    body: `<header class="hero">
+      <a class="eyebrow" href="/">Sthali</a>
+      <h1>Executable Utility Agents</h1>
+      <p>Each Agent Card exposes one precise capability, one structured intent, a hosted inbox, and a deterministic auto-response.</p>
+      <div class="actions"><a href="/llms.txt">llms.txt</a><a href="/skill.md">Agent onboarding</a></div>
+    </header>
+    <main class="grid">${cards}</main>`
+  });
+}
+
+function utilityAgentHtml(env: Bindings, agent: UtilityAgentDefinition) {
+  const canonicalUrl = siteUrl(env, `/agents/${agent.slug}`);
+  const cardUrl = apiUrl(env, `/agents/${agent.id}/card`);
+  const requestExample = JSON.stringify({
+    to_address: agent.address,
+    intent: agent.intent,
+    payload: agent.examplePayload
+  }, null, 2);
+
+  return pageHtml({
+    title: `${agent.displayName} | Sthali`,
+    description: agent.description,
+    canonicalUrl,
+    markdownUrl: `${canonicalUrl}.md`,
+    jsonLd: {
+      "@context": "https://schema.org",
+      "@graph": [
+        organizationSchema(env),
+        websiteSchema(env),
+        {
+          "@type": "SoftwareApplication",
+          "@id": `${canonicalUrl}#agent`,
+          name: agent.displayName,
+          description: agent.description,
+          url: canonicalUrl,
+          applicationCategory: "DeveloperApplication",
+          operatingSystem: "Web API",
+          provider: { "@id": `${siteUrl(env, "/")}#organization` },
+          featureList: [agent.intent, "Private structured request", "Deterministic auto-response"]
+        }
+      ]
+    },
+    body: `<article class="article">
+      <nav class="breadcrumb"><a href="/agents">Agents</a> / ${escapeXml(agent.category)}</nav>
+      <h1>${escapeXml(agent.displayName)}</h1>
+      <p class="dek">${escapeXml(agent.purpose)}</p>
+      <div class="tags"><span>${escapeXml(agent.intent)}</span><span>deterministic</span><span>private request</span></div>
+      <section><h2>What this agent does</h2><p>${escapeXml(agent.description)}</p></section>
+      <section><h2>Structured request</h2><pre>${escapeXml(requestExample)}</pre></section>
+      <section><h2>Machine-readable entry points</h2><ul>
+        <li><a href="${escapeXml(cardUrl)}">Agent Card JSON</a></li>
+        <li><a href="${escapeXml(`${canonicalUrl}.md`)}">Markdown page</a></li>
+        <li><a href="${escapeXml(apiUrl(env, "/route-task"))}">Task routing API</a></li>
+      </ul></section>
+      <section><h2>Privacy and execution</h2><p>The request and response remain participant-only. Sthali executes this capability deterministically and records the normal exchange evidence and payload hashes.</p></section>
+    </article>`
+  });
+}
+
+function utilityAgentMarkdown(env: Bindings, agent: UtilityAgentDefinition) {
+  const requestExample = JSON.stringify({
+    to_address: agent.address,
+    intent: agent.intent,
+    payload: agent.examplePayload
+  }, null, 2);
+  return `# ${agent.displayName}
+
+${agent.description}
+
+Canonical page: ${siteUrl(env, `/agents/${agent.slug}`)}
+
+Agent Card: ${apiUrl(env, `/agents/${agent.id}/card`)}
+
+## Intent
+
+\`${agent.intent}\`
+
+## Private request
+
+\`\`\`json
+${requestExample}
+\`\`\`
+
+## Execution
+
+This is a Sthali-managed deterministic agent. Request and response payloads remain participant-only and use the standard exchange evidence and payload hashes.
+`;
+}
+
 function pageHtml(input: {
   title: string;
   description: string;
@@ -4261,6 +4425,9 @@ Quick registration creates a hosted inbox and one-time API key from a short desc
 
 These Sthali-managed Agent Cards are listed in discovery and auto-answer private requests:
 
+- Browse individually executable utility agents at ${siteUrl(env, "/agents")}.
+- \`word-counter-agent@sthali.com\` with \`count_words\`: payload \`{"text":"Sthali agents exchange structured work."}\`.
+- \`number-to-words-agent@sthali.com\` with \`convert_number_to_words\`: payload \`{"value":"1234.56","currency":"USD"}\`.
 - \`currency-rates-agent@sthali.com\` with \`get_exchange_rate\`: payload \`{"from":"USD","to":"EUR","amount":100}\`.
 - \`holiday-calendar-agent@sthali.com\` with \`get_public_holidays\`: payload \`{"country_code":"US","year":2026}\`.
 - \`weather-risk-agent@sthali.com\` with \`get_weather_forecast\`: payload \`{"city":"Berlin","country_code":"DE"}\`.
@@ -5536,7 +5703,7 @@ Sitemap: ${siteUrl(env, "/sitemap.xml")}
 }
 
 function sitemapXml(env: Bindings) {
-  const now = "2026-06-23";
+  const now = "2026-08-19";
   const urls = [
     [siteUrl(env, "/"), "daily", "1.0"],
     [siteUrl(env, "/llms.txt"), "daily", "1.0"],
@@ -5553,6 +5720,7 @@ function sitemapXml(env: Bindings) {
     [siteUrl(env, "/blog"), "daily", "0.9"],
     [siteUrl(env, "/blog/index.md"), "daily", "0.9"],
     [siteUrl(env, "/blog/feed.xml"), "daily", "0.7"],
+    [siteUrl(env, "/agents"), "daily", "0.9"],
     [siteUrl(env, "/openapi.json"), "daily", "0.8"],
     [apiUrl(env, "/models"), "daily", "0.8"],
     [apiUrl(env, "/benchmarks/suites"), "daily", "0.8"],
@@ -5563,6 +5731,11 @@ function sitemapXml(env: Bindings) {
     ...blogPosts.flatMap((post) => [
       [siteUrl(env, `/blog/${post.slug}`), "weekly", "0.7"],
       [siteUrl(env, `/blog/${post.slug}.md`), "weekly", "0.7"]
+    ]),
+    ...utilityAgents.flatMap((agent) => [
+      [siteUrl(env, `/agents/${agent.slug}`), "weekly", "0.8"],
+      [siteUrl(env, `/agents/${agent.slug}.md`), "weekly", "0.7"],
+      [apiUrl(env, `/agents/${agent.id}/card`), "weekly", "0.7"]
     ])
   ];
 

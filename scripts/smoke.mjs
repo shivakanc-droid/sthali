@@ -165,6 +165,23 @@ async function main() {
       && sitemapText.includes("/v1/models")
       && sitemapText.includes("/v1/benchmarks/suites")
   );
+  record(
+    "utility agent sitemap entries",
+    sitemapResponse.ok
+      && sitemapText.includes("/agents/word-counter-agent")
+      && sitemapText.includes("/agents/word-counter-agent.md")
+      && sitemapText.includes("/v1/agents/agt_utility_word_counter/card")
+  );
+
+  const wordCounterPage = await rawRequest(`${siteRoot}/agents/word-counter-agent`);
+  const wordCounterPageText = await wordCounterPage.text();
+  record(
+    "word counter agent crawlable page",
+    wordCounterPage.ok
+      && wordCounterPageText.includes("Word Counter Agent")
+      && wordCounterPageText.includes("count_words")
+      && wordCounterPageText.includes("application/ld+json")
+  );
 
   const mcpServerResponse = await rawRequest(`${siteRoot}/mcp/server.json`);
   const mcpServer = JSON.parse(await mcpServerResponse.text());
@@ -212,6 +229,19 @@ async function main() {
     "route task recommends agent",
     Array.isArray(routedTask.recommendations)
       && routedTask.recommendations.some((item) => item.suggested_request?.to_address === "ci-log-triage-agent@sthali.com")
+  );
+
+  const routedWordCount = await request("/route-task", {
+    method: "POST",
+    body: JSON.stringify({
+      task: "count the words, characters, and reading time in this text",
+      payload: { text: "Sthali routes work to precise agents.", smoke_run: runId }
+    })
+  });
+  record(
+    "route task recommends word counter agent",
+    Array.isArray(routedWordCount.recommendations)
+      && routedWordCount.recommendations.some((item) => item.suggested_request?.to_address === "word-counter-agent@sthali.com")
   );
 
   const quick = await request("/agents/quick-register", {
@@ -272,7 +302,9 @@ async function main() {
     "openapi-inspector-agent@sthali.com",
     "ci-log-triage-agent@sthali.com",
     "models-directory-agent@sthali.com",
-    "benchmarks-agent@sthali.com"
+    "benchmarks-agent@sthali.com",
+    "word-counter-agent@sthali.com",
+    "number-to-words-agent@sthali.com"
   ];
   const discoveredAddresses = new Set((allAgents.agents ?? []).map((agent) => agent.agent_address));
   const missingManaged = managedAddresses.filter((address) => !discoveredAddresses.has(address));
@@ -312,6 +344,24 @@ async function main() {
   );
 
   const extraManagedChecks = [
+    {
+      name: "number to words",
+      to_address: "number-to-words-agent@sthali.com",
+      intent: "convert_number_to_words",
+      payload: { value: "1234.56", currency: "USD", smoke_run: runId },
+      ok: (response) => response?.ok === true
+        && response.words === "one thousand two hundred thirty-four dollars and fifty-six cents"
+    },
+    {
+      name: "word counter",
+      to_address: "word-counter-agent@sthali.com",
+      intent: "count_words",
+      payload: { text: "Hello, world! Hello Sthali.", smoke_run: runId },
+      ok: (response) => response?.ok === true
+        && response.metrics?.words === 4
+        && response.metrics?.unique_words === 3
+        && response.metrics?.sentences === 2
+    },
     {
       name: "holiday calendar",
       to_address: "holiday-calendar-agent@sthali.com",

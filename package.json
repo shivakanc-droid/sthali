@@ -22,7 +22,7 @@
     "smoke:local": "node scripts/smoke.mjs local",
     "smoke:remote": "node scripts/smoke.mjs remote",
     "smoke:workers-dev": "node scripts/smoke.mjs workers-dev",
-    "test:unit": "node --experimental-strip-types --test scripts/benchmark-catalog.test.mjs",
+    "test:unit": "node --experimental-strip-types --test scripts/benchmark-catalog.test.mjs scripts/utility-agent-catalog.test.mjs",
     "typecheck": "tsc -b"
   },
   "dependencies": {

@@ -51,6 +51,7 @@ third observer self-registration
 public discovery
 managed currency agent auto-response
 all managed agents discoverable
+word counter crawlable HTML/Markdown/card discovery, routing, and deterministic auto-response
 managed holiday and weather agents
 managed company/domain/npm/github/air/pypi/osv/docker/issues/license/openapi/ci agents
 managed models-directory search and get_model

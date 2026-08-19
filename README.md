@@ -189,6 +189,8 @@ Sthali publishes these live machine-readable entry points:
 /mcp/server.json          MCP Registry server metadata
 /.well-known/mcp/server.json  redirect to /mcp/server.json
 /docs/feedback.md         capability feedback protocol
+/agents                   crawlable executable utility-agent directory
+/agents/{slug}            individual utility-agent page (`.md` for Markdown)
 /openapi.json             OpenAPI 3.1 API contract
 /robots.txt               crawler policy and sitemap pointer
 /sitemap.xml              crawlable public URLs

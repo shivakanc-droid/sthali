@@ -70,6 +70,41 @@ export const utilityAgents = [
     purpose: "Estimates Flesch reading ease, Flesch-Kincaid grade, sentence length, and word complexity.",
     description: "Sthali-managed deterministic English readability estimator using transparent sentence, word, and syllable heuristics.",
     source: "Sthali deterministic readability formulas", examplePayload: { text: "Clear writing helps people understand complex ideas." }
+  },
+  {
+    id: "agt_utility_text_diff", slug: "text-diff-checker-agent", address: "text-diff-checker-agent@sthali.com",
+    displayName: "Text Diff Checker Agent", category: "text", intent: "compare_text",
+    purpose: "Compares two text blocks line by line and identifies unchanged, added, and removed lines.",
+    description: "Sthali-managed deterministic line-diff agent using a bounded longest-common-subsequence comparison.",
+    source: "Sthali bounded line diff", examplePayload: { before: "alpha\nbeta", after: "alpha\ngamma" }
+  },
+  {
+    id: "agt_utility_lorem_ipsum", slug: "lorem-ipsum-generator-agent", address: "lorem-ipsum-generator-agent@sthali.com",
+    displayName: "Lorem Ipsum Generator Agent", category: "text", intent: "generate_lorem_ipsum",
+    purpose: "Generates deterministic placeholder words, sentences, or paragraphs.",
+    description: "Sthali-managed placeholder-text generator with explicit unit and count limits for reproducible output.",
+    source: "Sthali deterministic placeholder corpus", examplePayload: { unit: "paragraphs", count: 2 }
+  },
+  {
+    id: "agt_utility_remove_duplicate_lines", slug: "remove-duplicate-lines-agent", address: "remove-duplicate-lines-agent@sthali.com",
+    displayName: "Remove Duplicate Lines Agent", category: "text", intent: "remove_duplicate_lines",
+    purpose: "Removes repeated lines while preserving first-seen order.",
+    description: "Sthali-managed deterministic line deduplicator with trim, case-sensitivity, and empty-line controls.",
+    source: "Sthali deterministic text transformation", examplePayload: { text: "alpha\nbeta\nalpha", trim: true, case_sensitive: true }
+  },
+  {
+    id: "agt_utility_slug_generator", slug: "slug-generator-agent", address: "slug-generator-agent@sthali.com",
+    displayName: "Slug Generator Agent", category: "text", intent: "generate_slugs",
+    purpose: "Converts one title or a list of titles into normalized URL slugs.",
+    description: "Sthali-managed deterministic slug generator with Unicode normalization and configurable hyphen or underscore separators.",
+    source: "Sthali deterministic URL slug rules", examplePayload: { items: ["Hello, Sthali!", "Agent Exchange"] }
+  },
+  {
+    id: "agt_utility_markdown_table", slug: "markdown-table-generator-agent", address: "markdown-table-generator-agent@sthali.com",
+    displayName: "Markdown Table Generator Agent", category: "text", intent: "generate_markdown_table",
+    purpose: "Converts structured rows, CSV, or tab-separated text into a Markdown table.",
+    description: "Sthali-managed deterministic table generator with quoted-delimiter parsing, cell escaping, and alignment controls.",
+    source: "Sthali deterministic tabular text conversion", examplePayload: { rows: [["Name", "Role"], ["Sthali", "Exchange"]], header: true }
   }
 ] as const satisfies readonly UtilityAgentDefinition[];
 
@@ -103,6 +138,11 @@ export function utilityAgentResponse(
   if (agentId === "agt_utility_markdown_preview") return markdownPreviewResponse(intent, payload);
   if (agentId === "agt_utility_case_converter") return caseConverterResponse(intent, payload);
   if (agentId === "agt_utility_readability") return readabilityResponse(intent, payload);
+  if (agentId === "agt_utility_text_diff") return textDiffResponse(intent, payload);
+  if (agentId === "agt_utility_lorem_ipsum") return loremIpsumResponse(intent, payload);
+  if (agentId === "agt_utility_remove_duplicate_lines") return removeDuplicateLinesResponse(intent, payload);
+  if (agentId === "agt_utility_slug_generator") return slugGeneratorResponse(intent, payload);
+  if (agentId === "agt_utility_markdown_table") return markdownTableResponse(intent, payload);
 
   return {
     ok: false,
@@ -293,6 +333,122 @@ export function readabilityResponse(intent: string, payload: Record<string, unkn
   }, note: "English estimate using a deterministic syllable heuristic." });
 }
 
+export function textDiffResponse(intent: string, payload: Record<string, unknown>) {
+  const agent = utilityAgents[7];
+  const before = boundedText(agent, intent, payload.before, "before", 100_000);
+  if (typeof before !== "string") return before;
+  const after = boundedText(agent, intent, payload.after, "after", 100_000);
+  if (typeof after !== "string") return after;
+  const beforeLines = splitLines(before);
+  const afterLines = splitLines(after);
+  if (beforeLines.length > 500 || afterLines.length > 500 || beforeLines.length * afterLines.length > 250_000) {
+    return utilityError(agent, intent, "Diff supports at most 500 lines per side and 250000 line comparisons");
+  }
+  const operations = diffLines(beforeLines, afterLines);
+  return utilitySuccess(agent, intent, {
+    operations,
+    summary: {
+      unchanged: operations.filter((item) => item.type === "equal").length,
+      added: operations.filter((item) => item.type === "add").length,
+      removed: operations.filter((item) => item.type === "remove").length
+    }
+  });
+}
+
+export function loremIpsumResponse(intent: string, payload: Record<string, unknown>) {
+  const agent = utilityAgents[8];
+  if (intent !== agent.intent) return utilityError(agent, intent, `Unsupported intent. Use ${agent.intent}.`);
+  const unit = typeof payload.unit === "string" ? payload.unit : "paragraphs";
+  const count = integerPayload(payload.count, 1);
+  const offset = integerPayload(payload.seed_offset, 0);
+  if (!['words', 'sentences', 'paragraphs'].includes(unit)) return utilityError(agent, intent, "payload.unit must be words, sentences, or paragraphs");
+  const max = unit === "words" ? 1000 : unit === "sentences" ? 200 : 50;
+  if (count < 1 || count > max || offset < 0 || offset > 10_000) return utilityError(agent, intent, `payload.count must be between 1 and ${max}; seed_offset must be 0..10000`);
+  const sentencesPerParagraph = integerPayload(payload.sentences_per_paragraph, 5);
+  if (sentencesPerParagraph < 1 || sentencesPerParagraph > 20) return utilityError(agent, intent, "sentences_per_paragraph must be between 1 and 20");
+  let cursor = offset;
+  const takeWords = (amount: number) => Array.from({ length: amount }, () => loremWords[(cursor++) % loremWords.length]);
+  const sentence = () => `${capitalize(takeWords(12).join(" "))}.`;
+  const output = unit === "words"
+    ? takeWords(count).join(" ")
+    : unit === "sentences"
+      ? Array.from({ length: count }, sentence).join(" ")
+      : Array.from({ length: count }, () => Array.from({ length: sentencesPerParagraph }, sentence).join(" ")).join("\n\n");
+  return utilitySuccess(agent, intent, { unit, count, seed_offset: offset, output });
+}
+
+export function removeDuplicateLinesResponse(intent: string, payload: Record<string, unknown>) {
+  const agent = utilityAgents[9];
+  const text = boundedText(agent, intent, payload.text, "text");
+  if (typeof text !== "string") return text;
+  const trim = payload.trim !== false;
+  const caseSensitive = payload.case_sensitive !== false;
+  const keepEmpty = payload.keep_empty !== false;
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const original of splitLines(text)) {
+    const line = trim ? original.trim() : original;
+    if (!keepEmpty && !line) continue;
+    const key = caseSensitive ? line : line.toLocaleLowerCase("en");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(line);
+  }
+  return utilitySuccess(agent, intent, {
+    output: output.join("\n"),
+    input_lines: splitLines(text).length,
+    output_lines: output.length,
+    removed_lines: splitLines(text).length - output.length,
+    options: { trim, case_sensitive: caseSensitive, keep_empty: keepEmpty }
+  });
+}
+
+export function slugGeneratorResponse(intent: string, payload: Record<string, unknown>) {
+  const agent = utilityAgents[10];
+  if (intent !== agent.intent) return utilityError(agent, intent, `Unsupported intent. Use ${agent.intent}.`);
+  const separator = payload.separator === "_" ? "_" : "-";
+  const rawItems = Array.isArray(payload.items) ? payload.items : typeof payload.text === "string" ? [payload.text] : null;
+  if (!rawItems || !rawItems.length || rawItems.length > 500 || rawItems.some((item) => typeof item !== "string")) {
+    return utilityError(agent, intent, "Provide payload.text or 1..500 string payload.items");
+  }
+  const stringItems: string[] = [];
+  for (const item of rawItems) if (typeof item === "string") stringItems.push(item);
+  const items = stringItems.map((input) => ({ input, slug: toSlug(input, separator) }));
+  if (items.some((item) => !item.slug)) return utilityError(agent, intent, "Every item must contain at least one Latin letter or digit after normalization");
+  return utilitySuccess(agent, intent, { separator, items, output: items.map((item) => item.slug).join("\n") });
+}
+
+export function markdownTableResponse(intent: string, payload: Record<string, unknown>) {
+  const agent = utilityAgents[11];
+  if (intent !== agent.intent) return utilityError(agent, intent, `Unsupported intent. Use ${agent.intent}.`);
+  let rows: string[][];
+  if (Array.isArray(payload.rows)) {
+    if (!payload.rows.every((row) => Array.isArray(row))) return utilityError(agent, intent, "payload.rows must be an array of arrays");
+    rows = payload.rows.map((row) => (row as unknown[]).map((cell) => cell == null ? "" : typeof cell === "object" ? JSON.stringify(cell) : String(cell)));
+  } else if (typeof payload.text === "string") {
+    if (payload.text.length > 200_000) return utilityError(agent, intent, "payload.text must not exceed 200000 characters");
+    const delimiter = payload.delimiter === "tab" ? "\t" : typeof payload.delimiter === "string" && payload.delimiter.length === 1 ? payload.delimiter : ",";
+    try {
+      rows = parseDelimited(payload.text, delimiter);
+    } catch (error) {
+      return utilityError(agent, intent, error instanceof Error ? error.message : "Invalid delimited text");
+    }
+  } else {
+    return utilityError(agent, intent, "Provide payload.rows or delimited payload.text");
+  }
+  if (!rows.length || rows.length > 200) return utilityError(agent, intent, "Table must contain 1..200 rows");
+  const columns = Math.max(...rows.map((row) => row.length));
+  if (!columns || columns > 50) return utilityError(agent, intent, "Table must contain 1..50 columns");
+  rows = rows.map((row) => [...row, ...Array(columns - row.length).fill("")]);
+  const hasHeader = payload.header !== false;
+  const header = hasHeader ? rows[0] : Array.from({ length: columns }, (_, index) => `Column ${index + 1}`);
+  const body = hasHeader ? rows.slice(1) : rows;
+  const alignments = Array.isArray(payload.alignments) ? payload.alignments : [];
+  const divider = header.map((_, index) => alignments[index] === "center" ? ":---:" : alignments[index] === "right" ? "---:" : ":---");
+  const markdownRows = [header, divider, ...body].map((row) => `| ${row.map(escapeMarkdownCell).join(" | ")} |`);
+  return utilitySuccess(agent, intent, { rows: rows.length, columns, header: hasHeader, markdown: markdownRows.join("\n") });
+}
+
 const smallNumbers = [
   "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
   "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"
@@ -336,10 +492,10 @@ function underThousandToEnglish(value: number) {
   return parts.join(" ");
 }
 
-function boundedText(agent: UtilityAgentDefinition, intent: string, value: unknown, field: string) {
+function boundedText(agent: UtilityAgentDefinition, intent: string, value: unknown, field: string, maxLength = 200_000) {
   if (intent !== agent.intent) return utilityError(agent, intent, `Unsupported intent. Use ${agent.intent}.`);
   if (typeof value !== "string") return utilityError(agent, intent, `payload.${field} must be a string`);
-  if (value.length > 200_000) return utilityError(agent, intent, `payload.${field} must not exceed 200000 characters`);
+  if (value.length > maxLength) return utilityError(agent, intent, `payload.${field} must not exceed ${maxLength} characters`);
   return value;
 }
 
@@ -402,6 +558,71 @@ function capitalize(value: string) {
 function countSyllables(value: string) {
   const word = value.replace(/[^a-z]/g, "").replace(/e$/, "");
   return Math.max(1, word.match(/[aeiouy]+/g)?.length ?? 0);
+}
+
+function splitLines(value: string) {
+  return value.length ? value.replace(/\r\n?/g, "\n").split("\n") : [];
+}
+
+function diffLines(before: string[], after: string[]) {
+  const table = Array.from({ length: before.length + 1 }, () => new Uint16Array(after.length + 1));
+  for (let i = 1; i <= before.length; i += 1) {
+    for (let j = 1; j <= after.length; j += 1) {
+      table[i][j] = before[i - 1] === after[j - 1]
+        ? table[i - 1][j - 1] + 1
+        : Math.max(table[i - 1][j], table[i][j - 1]);
+    }
+  }
+  const operations: Array<{ type: "equal" | "add" | "remove"; line: string; before_line: number | null; after_line: number | null }> = [];
+  let i = before.length;
+  let j = after.length;
+  while (i || j) {
+    if (i && j && before[i - 1] === after[j - 1]) {
+      operations.unshift({ type: "equal", line: before[i - 1], before_line: i, after_line: j }); i -= 1; j -= 1;
+    } else if (j && (!i || table[i][j - 1] >= table[i - 1][j])) {
+      operations.unshift({ type: "add", line: after[j - 1], before_line: null, after_line: j }); j -= 1;
+    } else {
+      operations.unshift({ type: "remove", line: before[i - 1], before_line: i, after_line: null }); i -= 1;
+    }
+  }
+  return operations;
+}
+
+const loremWords = "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua enim ad minim veniam quis nostrud exercitation ullamco laboris nisi aliquip ex ea commodo consequat duis aute irure reprehenderit voluptate velit esse cillum fugiat nulla pariatur excepteur sint occaecat cupidatat non proident sunt culpa qui officia deserunt mollit anim id est laborum".split(" ");
+
+function integerPayload(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isInteger(value) ? value : fallback;
+}
+
+function toSlug(value: string, separator: "-" | "_") {
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("en")
+    .replace(/[^a-z0-9]+/g, separator).replace(new RegExp(`^\\${separator}+|\\${separator}+$`, "g"), "")
+    .replace(new RegExp(`\\${separator}{2,}`, "g"), separator);
+}
+
+function parseDelimited(value: string, delimiter: string) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (quoted && char === '"' && value[index + 1] === '"') { cell += '"'; index += 1; }
+    else if (char === '"') quoted = !quoted;
+    else if (!quoted && char === delimiter) { row.push(cell); cell = ""; }
+    else if (!quoted && (char === "\n" || char === "\r")) {
+      if (char === "\r" && value[index + 1] === "\n") index += 1;
+      row.push(cell); rows.push(row); row = []; cell = "";
+    } else cell += char;
+  }
+  if (quoted) throw new Error("Delimited text contains an unclosed quoted field");
+  row.push(cell);
+  if (row.length > 1 || row[0] || !rows.length) rows.push(row);
+  return rows;
+}
+
+function escapeMarkdownCell(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
 }
 
 function utilityError(agent: UtilityAgentDefinition, intent: string, error: string) {

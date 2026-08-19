@@ -244,6 +244,25 @@ async function main() {
       && routedWordCount.recommendations.some((item) => item.suggested_request?.to_address === "word-counter-agent@sthali.com")
   );
 
+  const newAgentRoutes = [
+    ["compare this text diff and show changed lines", "text-diff-checker-agent@sthali.com"],
+    ["generate lorem ipsum placeholder text", "lorem-ipsum-generator-agent@sthali.com"],
+    ["remove duplicate lines from this list", "remove-duplicate-lines-agent@sthali.com"],
+    ["create an SEO URL slug", "slug-generator-agent@sthali.com"],
+    ["convert this CSV to a Markdown table", "markdown-table-generator-agent@sthali.com"]
+  ];
+  for (const [task, address] of newAgentRoutes) {
+    const routed = await request("/route-task", {
+      method: "POST",
+      body: JSON.stringify({ task, payload: { smoke_run: runId } })
+    });
+    record(
+      `route task recommends ${address}`,
+      Array.isArray(routed.recommendations)
+        && routed.recommendations.some((item) => item.suggested_request?.to_address === address)
+    );
+  }
+
   const quick = await request("/agents/quick-register", {
     method: "POST",
     body: JSON.stringify({
@@ -309,7 +328,12 @@ async function main() {
     "roman-numeral-converter-agent@sthali.com",
     "markdown-preview-agent@sthali.com",
     "case-converter-agent@sthali.com",
-    "readability-score-agent@sthali.com"
+    "readability-score-agent@sthali.com",
+    "text-diff-checker-agent@sthali.com",
+    "lorem-ipsum-generator-agent@sthali.com",
+    "remove-duplicate-lines-agent@sthali.com",
+    "slug-generator-agent@sthali.com",
+    "markdown-table-generator-agent@sthali.com"
   ];
   const discoveredAddresses = new Set((allAgents.agents ?? []).map((agent) => agent.agent_address));
   const missingManaged = managedAddresses.filter((address) => !discoveredAddresses.has(address));
@@ -354,6 +378,11 @@ async function main() {
     { name: "Markdown preview", to_address: "markdown-preview-agent@sthali.com", intent: "render_markdown_preview", payload: { markdown: "# Safe\n\n**Preview** <script>x</script>", smoke_run: runId }, ok: (r) => r?.ok === true && r.html?.includes("<h1>Safe</h1>") && r.html?.includes("&lt;script&gt;") && !r.html?.includes("<script>") },
     { name: "case converter", to_address: "case-converter-agent@sthali.com", intent: "convert_text_case", payload: { text: "Hello Sthali Agent", mode: "snake", smoke_run: runId }, ok: (r) => r?.ok === true && r.output === "hello_sthali_agent" },
     { name: "readability", to_address: "readability-score-agent@sthali.com", intent: "check_readability", payload: { text: "Clear writing helps readers. Short sentences improve understanding.", smoke_run: runId }, ok: (r) => r?.ok === true && r.metrics?.sentences === 2 && typeof r.metrics?.flesch_reading_ease === "number" },
+    { name: "text diff", to_address: "text-diff-checker-agent@sthali.com", intent: "compare_text", payload: { before: "alpha\nbeta", after: "alpha\ngamma", smoke_run: runId }, ok: (r) => r?.ok === true && r.summary?.unchanged === 1 && r.summary?.added === 1 && r.summary?.removed === 1 },
+    { name: "Lorem ipsum generator", to_address: "lorem-ipsum-generator-agent@sthali.com", intent: "generate_lorem_ipsum", payload: { unit: "sentences", count: 2, smoke_run: runId }, ok: (r) => r?.ok === true && r.count === 2 && typeof r.output === "string" && r.output.length > 0 },
+    { name: "duplicate line remover", to_address: "remove-duplicate-lines-agent@sthali.com", intent: "remove_duplicate_lines", payload: { text: "Alpha\nbeta\nalpha", case_sensitive: false, smoke_run: runId }, ok: (r) => r?.ok === true && r.output === "Alpha\nbeta" && r.removed_lines === 1 },
+    { name: "slug generator", to_address: "slug-generator-agent@sthali.com", intent: "generate_slugs", payload: { items: ["Café Sthali", "Agent Exchange"], smoke_run: runId }, ok: (r) => r?.ok === true && r.items?.[0]?.slug === "cafe-sthali" && r.items?.[1]?.slug === "agent-exchange" },
+    { name: "Markdown table generator", to_address: "markdown-table-generator-agent@sthali.com", intent: "generate_markdown_table", payload: { text: "Name,Value\nSthali,\"Agent | Exchange\"", smoke_run: runId }, ok: (r) => r?.ok === true && r.rows === 2 && r.columns === 2 && r.markdown?.includes("Agent \\| Exchange") },
     {
       name: "number to words",
       to_address: "number-to-words-agent@sthali.com",

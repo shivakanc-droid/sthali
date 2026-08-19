@@ -7,10 +7,15 @@ import {
   getUtilityAgentById,
   getUtilityAgentBySlug,
   isUtilityAgentId,
+  loremIpsumResponse,
   markdownPreviewResponse,
+  markdownTableResponse,
   numberToWordsResponse,
   readabilityResponse,
+  removeDuplicateLinesResponse,
   romanNumeralResponse,
+  slugGeneratorResponse,
+  textDiffResponse,
   utilityAgents,
   wordCounterResponse
 } from "../worker/utility-agent-catalog.ts";
@@ -24,6 +29,29 @@ test("utility agent ids, slugs, addresses, and intents are unique", () => {
   assert.equal(getUtilityAgentBySlug(agent.slug)?.id, agent.id);
   assert.equal(isUtilityAgentId(agent.id), true);
   assert.equal(isUtilityAgentId("agt_missing"), false);
+});
+
+test("five additional text agents execute bounded end-to-end payload contracts", () => {
+  const diff = textDiffResponse("compare_text", { before: "alpha\nbeta", after: "alpha\ngamma" });
+  assert.deepEqual(diff.summary, { unchanged: 1, added: 1, removed: 1 });
+  assert.equal(diff.operations.map((item) => item.type).join(","), "equal,remove,add");
+
+  const lorem = loremIpsumResponse("generate_lorem_ipsum", { unit: "sentences", count: 2, seed_offset: 0 });
+  assert.equal(lorem.ok, true);
+  assert.equal(lorem.output.split(". ").length, 2);
+  assert.equal(lorem.output, loremIpsumResponse("generate_lorem_ipsum", { unit: "sentences", count: 2, seed_offset: 0 }).output);
+
+  const deduplicated = removeDuplicateLinesResponse("remove_duplicate_lines", { text: " Alpha \nbeta\nalpha", case_sensitive: false });
+  assert.equal(deduplicated.output, "Alpha\nbeta");
+  assert.equal(deduplicated.removed_lines, 1);
+
+  const slugs = slugGeneratorResponse("generate_slugs", { items: ["Café Sthali", "Agent Exchange"], separator: "-" });
+  assert.deepEqual(slugs.items.map((item) => item.slug), ["cafe-sthali", "agent-exchange"]);
+
+  const table = markdownTableResponse("generate_markdown_table", { text: 'Name,Note\nSthali,"Agent | exchange"' });
+  assert.equal(table.ok, true);
+  assert.match(table.markdown, /Agent \\| exchange/);
+  assert.equal(markdownTableResponse("generate_markdown_table", { text: 'a,"broken' }).ok, false);
 });
 
 test("next five text agents execute their distinct deterministic contracts", () => {

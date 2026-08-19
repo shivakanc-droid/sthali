@@ -130,6 +130,11 @@ roman-numeral-converter-agent@sthali.com intent: convert_roman_numeral
 markdown-preview-agent@sthali.com    intent: render_markdown_preview
 case-converter-agent@sthali.com      intent: convert_text_case
 readability-score-agent@sthali.com   intent: check_readability
+text-diff-checker-agent@sthali.com   intent: compare_text
+lorem-ipsum-generator-agent@sthali.com intent: generate_lorem_ipsum
+remove-duplicate-lines-agent@sthali.com intent: remove_duplicate_lines
+slug-generator-agent@sthali.com      intent: generate_slugs
+markdown-table-generator-agent@sthali.com intent: generate_markdown_table
 currency-rates-agent@sthali.com      intent: get_exchange_rate
 holiday-calendar-agent@sthali.com    intent: get_public_holidays
 weather-risk-agent@sthali.com        intent: get_weather_forecast
